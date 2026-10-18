@@ -18,7 +18,7 @@
 
 ## 1. 项目简介与背景
 
-本项目对 Anthropic 官方发布的 **Claude Desktop for Windows (MSIX 打包版)** 展开了深度的静态代码逆向分析（基于 REA 静态证据库）。分析涵盖了历史版本 `2.37337.1.0` 与当前最新版本 `2.42304.0.0`。
+本仓库记录使用 REA 对两个指定 Windows MSIX 样本进行的静态分析：历史样本 `2.37337.1.0` 与本目录当前样本 `2.42304.0.0`。版本号描述分析对象，不表示它是 Anthropic 当前最新发布。
 
 通过对 `app.asar`、解包 Web 资产（`resources/ion-dist/` 116MB 前端）、Rust 原生绑定（`@ant/claude-native`）以及打包的 217MB 独立 CLI 二进制（`claude.exe`）进行静态反编译与反混淆，我们完整揭示了 Claude Desktop 的系统分层架构、双向控制协议、数据防泄漏 (DLP) 机制、容器虚拟机沙箱以及工业级设计系统 (CDS)。
 
@@ -41,26 +41,24 @@
 │                                                                         │
 │  [Layer 2: Electron 主调度进程 (Node.js)]                               │
 │  ├─ 引导入口: index.pre.js -> index.js -> index.chunk-lzaSYO3Q.js (7MB) │
-│  ├─ 59 个类型化 RPC 命名空间 (LocalSessions, ClaudeCode, ClaudeVM 等)    │
+│  ├─ IPC/RPC 注册表 (LocalSessions, ClaudeCode, ClaudeVM 等；静态盘点)  │
 │  ├─ 12 个内置 MCP 服务器 (ccd_view, ccd_window, ccd_host, terminal 等)   │
 │  ├─ 托管配置管理: Windows 注册表 GPO (HKLM\SOFTWARE\Policies\Claude)     │
 │  └─ 敏感文件 DLP 拦截与 DPAPI 双层本地加密安全存储                      │
 │                                                                         │
 │  [Layer 3: Rust 原生系统扩展 (@ant/claude-native)]                      │
 │  ├─ Computer Use 自动化: 屏幕捕获、无级鼠标移动、键盘字符注入           │
-│  ├─ 路径逃逸防御 (*Beneath): 内核级句柄隔离，严防 ../../ 越权跳跃       │
-│  ├─ 凭证与硬件证明: Windows DPAPI、Windows Hello 生物识别、TPM 硬件签名 │
-│  └─ 进程生命周期隔离: Windows Job Object 强绑定                         │
+│  ├─ 原生扩展: 包内可见若干系统 API 名称；5 处完整性矛盾需谨慎解释       │
+│  └─ 原生功能是否可用、是否被调用及其安全效果均未由本静态分析验证       │
 │                                                                         │
 │  [Layer 4: 智能体执行引擎 (claude.exe Helper)]                           │
-│  ├─ 打包机制: 基于 Bun Compile 打包的单一 217MB 原生 PE 二进制           │
-│  ├─ 控制管道: 双向 stream-json 协议 (59 种子类型: can_use_tool 等)      │
-│  └─ 生命周期管理: HostLoop 调度，凭据 FD 匿名化隔离，taskkill 级联终止   │
+│  ├─ 包内 PE 文件: claude.exe (245,756,240 bytes; 234.5 MiB)              │
+│  ├─ stream-json 标签: 静态观察到审批/凭据刷新等协议名称                 │
+│  └─ HostLoop 生命周期为重建草图；FD 传递与进程隔离未获证实              │
 │                                                                         │
 │  [Layer 5: Cowork 虚拟化沙箱 (Cowork VM)]                               │
-│  ├─ 虚拟化底层: Windows Host Compute System (HCS) / Hyper-V             │
-│  ├─ 容器内核: gVisor 独立轻量微虚拟机                                   │
-│  └─ 凭证边界: 本地 MITM 代理白名单过滤 (NSn)，杜绝敏感 Token 外泄       │
+│  ├─ 包内存在 HCS/VM 相关代码与资源线索；执行路径未动态验证              │
+│  └─ 代理与凭据过滤线索不构成无外泄或网络隔离保证                        │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -68,23 +66,23 @@
 
 ## 3. 已逆向并重构的核心源码模块 (`deobfuscated/`)
 
-本项目已将主进程和 SDK 中高度混淆的核心逻辑反混淆、补充完整强类型定义与业务注释，并在 [`deobfuscated/`](deobfuscated/) 目录提供了可独立阅读与测试的 13 个 TypeScript 源码模块：
+本仓库的 `deobfuscated/` 中有 13 个依据静态线索编写的分析重建稿，不是厂商原始源码或可直接使用的实现；其中类型、控制流、API 完整度和行为尚未通过编译、单元测试或运行时验证。详见 [重建稿说明](deobfuscated/README.md)。
 
 | 模块文件 | 源码逆向来源 | 核心职责与关键技术点 |
 |---|---|---|
 | **[DlpSecurityFilter.ts](deobfuscated/DlpSecurityFilter.ts)** | `CHpJbW9_.js` (`FFn`, `PFn`, `AFn`) | **数据防泄漏 (DLP)**：敏感私钥/证书 (`.pem`, `.key`, `id_rsa`)、浏览器 Cookie、云凭证拦截；防御 NTFS 备用数据流 (ADS) 遍历攻击 |
-| **[ThirdPartyMockRouter.ts](deobfuscated/ThirdPartyMockRouter.ts)** | `CHpJbW9_.js` (`Z$r`, `X$r`, `U$r`) | **纯内网 3P 路由**：拦截并注册 `app://localhost` 协议，提供 `/api/bootstrap`、`/i18n` 等本地 Mock 接口，阻断公网出网 |
+| **[ThirdPartyMockRouter.ts](deobfuscated/ThirdPartyMockRouter.ts)** | `CHpJbW9_.js` (`Z$r`, `X$r`, `U$r`) | **3P 路由重建稿**：对应部分本地协议/API stub 线索；不证明进程全部流量被拦截或公网出网受阻 |
 | **[SessionEnvironmentBuilder.ts](deobfuscated/SessionEnvironmentBuilder.ts)** | `CHpJbW9_.js` (`bJ`, `anthropicWire`) | **环境变量组装**：构造 `ANTHROPIC_BASE_URL`，清除明文凭证，挂载平台标识头及自建网关路由配置 |
-| **[AgentSdkControlProtocol.ts](deobfuscated/AgentSdkControlProtocol.ts)** | `C4qJSrNf.js` & `CHpJbW9_.js` | **双向控制协议**：59 种子类型 `stream-json` 消息分发；实现 `can_use_tool` 原生卡片审批与 `host_auth_token_refresh` 动态 Token 刷新 |
+| **[AgentSdkControlProtocol.ts](deobfuscated/AgentSdkControlProtocol.ts)** | `C4qJSrNf.js` & `CHpJbW9_.js` | **控制协议重建稿**：汇总静态观察到的 stream-json 标签；不代表所有标签都有完整处理器或已验证无中断刷新 |
 | **[ShellPtyManager.ts](deobfuscated/ShellPtyManager.ts)** | `DIEpbncU.js` & `ptyHostWorker.js` | **终端 PTY 管理**：管理 `utilityProcess` 中的 node-pty 进程，30 秒心跳 Watchdog 自动 refork，SSH 代理链集成 |
 | **[CodeHelperDownloader.ts](deobfuscated/CodeHelperDownloader.ts)** | `CHpJbW9_.js` (`installDirFor`, buildPin) | **CLI 版本管理**：解析远端 BuildPin 清单，校验 SHA-256 哈希，基于哈希切片组织目录，支持 `CLAUDE_CODE_LOCAL_BINARY` 覆盖 |
 | **[ManagedConfigResolver.ts](deobfuscated/ManagedConfigResolver.ts)** | `CHpJbW9_.js` (`SPn`, `QUr`) | **企业注册表策略**：解析 `HKLM\SOFTWARE\Policies\Claude` GPO，严格映射 SDK 四级配置（`user < project < projectLocal < managed`） |
 | **[CoworkVmManager.ts](deobfuscated/CoworkVmManager.ts)** | `CHpJbW9_.js` (`startVM`, `applyVmImageDelta`) | **Cowork 虚拟机底座**：调用 Windows HCS 接口管理 gVisor 虚拟机，实现 VM 差量增量热升级与 MITM 白名单凭证审批 |
-| **[ClaudeNativeBindings.ts](deobfuscated/ClaudeNativeBindings.ts)** | `@ant/claude-native/*.node` (NAPI-RS) | **Win32 底层系统绑定**：Computer Use 自动化、内核级 `*Beneath` 路径防御、DPAPI、Windows Hello、TPM 硬件证明与 Job Object 容器 |
-| **[BuiltinMcpServers.ts](deobfuscated/BuiltinMcpServers.ts)** | 内置 MCP 注册表 (`go(uv,...)`) | **12 大内置 MCP 服务器**：集中式协议定义与调度器（`ccd_view`, `ccd_window`, `ccd_session_mgmt`, `terminal`, `ccd_host` 等） |
+| **[ClaudeNativeBindings.ts](deobfuscated/ClaudeNativeBindings.ts)** | `@ant/claude-native/*.node` (NAPI-RS) | **原生 API 名称草图**：对应扩展包中观察到的名称；样本存在完整性矛盾，不能据此保证功能或安全效果 |
+| **[BuiltinMcpServers.ts](deobfuscated/BuiltinMcpServers.ts)** | 内置 MCP 注册表线索 | **部分 MCP schema 草图**：当前文件只有 7 个条目，且 dispatcher 不调用实际 handler；不是完整的 12 服务目录 |
 | **[LocalSessionsController.ts](deobfuscated/LocalSessionsController.ts)** | `CHpJbW9_.js` (`LocalSessions` RPC) | **会话状态机调度**：UI 交互操作面，支持多模态消息发送、Fork 分叉会话、脱离父级、模型与 Effort 实时切换 |
-| **[HostLoopProcessManager.ts](deobfuscated/HostLoopProcessManager.ts)** | `YBFVQBQ_.js` (`HostLoop`) | **进程组生命周期**：派生 `claude.exe`，敏感 Token 匿名 FD 写入并立即物理 unlink，Windows Job Object 与 `taskkill /T /F` 强制树状级联回收 |
-| **[SurfaceReachabilityMatrix.ts](deobfuscated/SurfaceReachabilityMatrix.ts)** | `CHpJbW9_.js` (`vze`, `bze`) | **表面执行决议矩阵**：跨 Chat / Code / Cowork 决议运行目标（device 宿主、sshHost 远程、cloud 云端），实施安全策略阻断 |
+| **[HostLoopProcessManager.ts](deobfuscated/HostLoopProcessManager.ts)** | `YBFVQBQ_.js` (`HostLoop`) | **进程生命周期草图**：当前稿未把凭据 FD 加入子进程 stdio，回退路径将 token 放入环境变量；没有 Job Object 绑定，仅有 taskkill 路径 |
+| **[SurfaceReachabilityMatrix.ts](deobfuscated/SurfaceReachabilityMatrix.ts)** | `CHpJbW9_.js` (`vze`, `bze`) | **表面执行决议矩阵草图**：汇总静态识别的运行目标与策略分支；未验证目标环境中的完整策略效果 |
 
 ---
 
@@ -143,15 +141,27 @@ sequenceDiagram
 
 ## 5. 前端架构与 Claude Design System (CDS)
 
+> 详细专题分析报告：请参阅 **[docs/cds-design-tokens-and-frontend-deepdive.md](docs/cds-design-tokens-and-frontend-deepdive.md)**
+
 1. **双容器前端渲染拓扑**：
    - 桌面外壳（`.vite/renderer/main_window/`）：负责原生标题栏、窗口拖拽区（`-webkit-app-region: drag`）与微秒级行内骨架屏占位（`paintShapes`）。
    - 核心 Web 应用（`resources/ion-dist/`）：纯 React SPA（约 116MB JS 资源），由 `app://localhost` 加载。
 2. **1,070 个 `--cds-*` 语义设计令牌**：
-   - 全量采用语义命名空间（`font`, `surface`, `fill`, `text`, `alpha`, `pad`, `gap` 等）。
+   - 全量采用语义命名空间（`font`, `surface`, `fill`, `text`, `alpha`, `pad`, `gap`, `chart` 等）。
    - **GRADE 字体光学补偿机制**：在 Windows 暗色模式下，借助可变字体的 `"GRAD"`（级差）轴调小笔画，完美消除人眼光晕膨胀（Halation Effect），同时保持字符水平物理度量绝对 0 偏差，彻底根除切主题时的文本排版跳动。
+   - **前沿 CSS Web 标准深度实践**：325 处 `@container` 容器查询规则自适应分屏，785 处 `color-mix()` 现代感知均匀混色，`text-box: trim-start cap alphabetic` 像素级基线切除。
 3. **多线程并发 Web Worker 流水线**：
-   - `highlightWorker`（1.5MB）：基于 Shiki 的 TextMate 离线语法高亮。
-   - `framebufferCanvasWorker`：通过 `OffscreenCanvas` 与 `ImageDecoder` 硬件解码，直通 GPU 渲染 Computer Use 屏幕画面，自动丢弃陈旧滞后帧。
+   - `highlightWorker`（1.57MB）：基于 Shiki 的 TextMate 离线异步语法高亮。
+   - `framebufferCanvasWorker`（2KB）：通过 `OffscreenCanvas` 与 `ImageDecoder` 硬件并行解码，直通 GPU 渲染 Computer Use 屏幕流画面，自动丢弃陈旧滞后帧并及时关闭释放显存。
+   - `completionGzipWorker`（591B）：基于 `CompressionStream("gzip")` 实现数据流高效内存压缩。
+
+---
+
+## 6. 核心逆向技术文档导航
+
+- 📘 **[claude-desktop-architecture.md](claude-desktop-architecture.md)**：全景系统架构、底层进程模型、Mermaid 交互时序图与安全边界解析主文档。
+- 🎨 **[docs/cds-design-tokens-and-frontend-deepdive.md](docs/cds-design-tokens-and-frontend-deepdive.md)**：1,070 个 `--cds-*` 设计令牌分类数学解析、GRADE 光学补偿、零白屏骨架屏与多线程 Worker 管线专题报告。
+- 🔬 **[rea-architecture-frontend-deep-dive.md](rea-architecture-frontend-deep-dive.md)**：版本演进对比、3,644 个解包前端资源盘点及 REA 静态证据审计。
 
 ---
 
@@ -231,6 +241,7 @@ The repository includes clean, structured, and strongly-typed TypeScript impleme
 ## 4. Key Architectural Documents
 
 - 📘 **[claude-desktop-architecture.md](claude-desktop-architecture.md)**: The definitive, comprehensive architecture manual containing sequence diagrams, memory models, security boundaries, and full REA evidence citations.
+- 🎨 **[docs/cds-design-tokens-and-frontend-deepdive.md](docs/cds-design-tokens-and-frontend-deepdive.md)**: Dedicated deep dive report on the 1,070 `--cds-*` tokens, GRADE optical compensator, zero-white-screen bootloader, and multi-threaded Web Workers.
 - 🔬 **[rea-architecture-frontend-deep-dive.md](rea-architecture-frontend-deep-dive.md)**: Specialized deep dive into the latest `2.42304.0.0` frontend bundle assets, Web Worker thread separation, and CDS design tokens.
 
 ---
