@@ -1,4 +1,5 @@
 # Claude Desktop 2.37337.1 (Windows MSIX) — REA 静态分析架构图
+> **版本提示（2026-10-18）：** 本稿对应 Claude Desktop 2.37337.1.0，是历史版本分析。本目录当前 `Claude.msix` 为 2.42304.0.0；新版 REA 与前端分析见 [rea-architecture-frontend-deep-dive.md](rea-architecture-frontend-deep-dive.md)。旧稿中的 bundle 名、资源数量和配置细节不应直接视作新版事实。
 
 > 证据来源：`app.asar`（SHA-256 `6290a54e…`）静态解析 + 解包文本检索。
 > 所有结论为静态观察/推断（REA Evidence `ev_b646af…`），不证明运行时行为。
@@ -804,3 +805,4 @@ MSIX 内直接打包并注册了全套专用可变字体：
 - **Clawd Quest**：内置的 2D 像素复古冒险小游戏。
 - 文件头部硬编码嵌入了完整的 8-bit Base64 MP3 音频流（`data:audio/mpeg;base64,//tAwA...`）。
 - 包含完整的 Sprite 碰撞、计分和关卡引擎，用于在离线等待或特定彩蛋时供用户娱乐。
+
