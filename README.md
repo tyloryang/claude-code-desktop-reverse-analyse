@@ -155,6 +155,7 @@ sequenceDiagram
 ## 6. 核心逆向技术文档导航
 
 - 📘 **[claude-desktop-architecture.md](claude-desktop-architecture.md)**：全景系统架构、底层进程模型、Mermaid 交互时序图与安全边界解析主文档。
+- 🔄 **[docs/user-request-end-to-end-dataflow.md](docs/user-request-end-to-end-dataflow.md)**：**用户请求全链路端到端数据流深度剖析**（从前端 TipTap 编辑器、IPC 加密通道、主进程 `LocalSessions.sendMessage`、HostLoop 进程组调度到 CLI 推理与多线程渲染的 10 阶段源码级追踪）。
 - 🎨 **[docs/cds-design-tokens-and-frontend-deepdive.md](docs/cds-design-tokens-and-frontend-deepdive.md)**：CSS 自定义属性词法计数、主题/字体轴线索、HTML 缓存预热与 Worker 资源的静态证据边界。
 - 🔬 **[rea-architecture-frontend-deep-dive.md](rea-architecture-frontend-deep-dive.md)**：版本演进对比、3,644 个解包前端资源盘点及 REA 静态证据审计。
 
@@ -234,6 +235,7 @@ These files describe the analysts' models, not guaranteed Claude Desktop behavio
 ## 4. Key Architectural Documents
 
 + 📘 **[claude-desktop-architecture.md](claude-desktop-architecture.md)**: Historical `2.37337.1.0` architecture notes with static evidence and coverage limitations.
++ 🔄 **[docs/user-request-end-to-end-dataflow.md](docs/user-request-end-to-end-dataflow.md)**: **End-to-End User Request Data Flow Deep Dive** (10-stage source-code level trace from Composer TipTap input, encrypted IPC frame validation, Main Process `LocalSessions.sendMessage`, HostLoop subprocess management, to CLI inference and multi-threaded rendering).
 + 🎨 **[docs/cds-design-tokens-and-frontend-deepdive.md](docs/cds-design-tokens-and-frontend-deepdive.md)**: Current sample CSS token inventory, lexical counts, and frontend evidence boundaries.
 + 🔬 **[rea-architecture-frontend-deep-dive.md](rea-architecture-frontend-deep-dive.md)**: Analysis of the repository's `2.42304.0.0` sample, including selected frontend bundles and explicit coverage limits.
 
