@@ -1,82 +1,46 @@
-# 用户请求全链路端到端数据流深度剖析 (Source-Code Level Data Flow)
+# 用户请求数据流：静态候选关系与证据边界
 
-> **分析对象**：`Claude.msix` 内部 ASAR 主进程（`index.chunk-lzaSYO3Q.js` 7.08MB、`index.chunk-Bn6onBlX.js` 2.10MB、`mainView.js` 171KB）与 Web 资产（`resources/ion-dist/` 116MB JS）。  
-> **证据级别**：源码级精确切片与逆向还原，包含真实变量名、方法签名、RPC 拓扑及数据帧格式。
+> **分析对象**：Claude Desktop MSIX `2.42304.0.0` 的 ASAR 和打包 Web 资源。JS 来自压缩 bundle 的静态片段与 REA 关系分析，不是原始厂商源码。
+> **证据级别**：候选静态路径。除明确标注的代码观察外，关系没有由运行时跟踪确认；重建代码不能作为产品行为、安全属性或网络效果保证。覆盖纠错和待补项见 [覆盖审计](analysis-coverage-audit-2026-10-18.md)。
 
 ---
 
-## 一、 全链路数据流十阶段拓扑概览
+## 一、端到端候选结构与未闭合边
 
-当用户在 Claude Desktop 界面中键入 Prompt 并按下 Enter（或点击发送），整个数据流经历 **前端采集 → IPC 加密跨进程调用 → 主进程路由决议 → 进程组调度与 FD 隔离 → CLI 引擎流式通信 → API 网络交互 → 双向安全控制流 → 多线程并行解码渲染 → 最终落盘持久化** 十个阶段：
+下图只表示在包内找到的静态组件/代码线索。虚线箭头表示待确认的候选关系；它不是某一次用户请求的运行时追踪。尤其是 helper payload 不在当前 MSIX 样本中，图中的 helper、API 与回传边都不能视为已经实际执行。
 
-```
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ [阶段 1: 前端输入与草稿暂存]  TipTap / ProseMirror 编辑器捕获，写入 IndexedDB 草稿缓存     │
-└────────────────────────────────────┬───────────────────────────────────────────────────┘
-                                     │ 用户触发发送 (Enter / Click)
-                                     ▼
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ [阶段 2: 本地传输层封装]      cef1e6037: Kn() 组装多模态负载，提取 sessionMentions / Pastes│
-└────────────────────────────────────┬───────────────────────────────────────────────────┘
-                                     │ 调用 globalThis["claude.web"].LocalSessions.sendMessage
-                                     ▼
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ [阶段 3: Preload 桥与帧安全]   mainView.js: 校验 frameToken / routingId，通道前缀加密    │
-│                                格式: $eipc_message$_<UUID>_$_claude.web_$_LocalSessions │
-└────────────────────────────────────┬───────────────────────────────────────────────────┘
-                                     │ Electron ipcRenderer.invoke()
-                                     ▼
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ [阶段 4: 主进程 RPC 调度]     index.chunk-Bn6onBlX.js: async sendMessage()              │
-│                                校验 TokenCap 窗口、Slash 指令拦截、CWD 路径存活性校验     │
-└────────────────────────────────────┬───────────────────────────────────────────────────┘
-                                     │ 表面分支分流 (Chat vs Cowork vs Code)
-            ┌────────────────────────┼────────────────────────┐
-            ▼ (Code 标签页)           ▼ (Chat 模式)            ▼ (Cowork 模式)
-┌────────────────────────┐┌────────────────────────┐┌────────────────────────┐
-│ [阶段 5A: HostLoop 宿主]││ [阶段 5B: 主进程直连] ││ [阶段 5C: Cowork VM]   │
-│ · 敏感凭证匿名 FD 写入 ││ · Prn() 直接构造      ││ · HCS 虚拟化启动 gVisor│
-│ · unlinkSync 立即断链  ││   /v1/messages POST    ││ · 本地 MITM 代理白名单 │
-│ · Windows Job Object 绑││ · 不经本地 CLI Helper ││ · 隔离执行复杂文件任务 │
-└───────────┬────────────┘└───────────┬────────────┘└───────────┬────────────┘
-            │                         │                         │
-            ▼                         ▼                         ▼
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ [阶段 6: 智能体推理与流式执行] claude.exe (Bun Binary 217MB) 发起 HTTPS SSE POST 请求  │
-│                                附带 anthropic-version: 2023-06-01 & DESKTOP_APP 标识头 │
-└────────────────────────────────────┬───────────────────────────────────────────────────┘
-                                     │ 触发工具调用 (Tool Call)
-                                     ▼
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ [阶段 7: 双向 Stream-JSON 控制流] can_use_tool 权限卡片审批 / Token 动态无感热更新      │
-│                                  CLI stdout -> 主进程 -> Preload -> 原生审批卡片      │
-└────────────────────────────────────┬───────────────────────────────────────────────────┘
-                                     │ SSE content_block_delta 实时回传
-                                     ▼
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ [阶段 8: 主进程事件广播分发]   this.deps.emit("event", { type: "message", sessionId })  │
-└────────────────────────────────────┬───────────────────────────────────────────────────┘
-                                     │ ipcRenderer.on() 跨进程事件推送
-                                     ▼
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ [阶段 9: 前端多线程高并发渲染] Zustand Store 原子更新 / Shiki Web Worker 离线高亮      │
-│                                framebufferCanvasWorker (OffscreenCanvas) 硬件直通 GPU  │
-└────────────────────────────────────┬───────────────────────────────────────────────────┘
-                                     │ 轮次收尾 (Turn Wrap-Up)
-                                     ▼
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ [阶段 10: 状态落盘与标题生成]  IndexedDB trees 存储会话树，异步生成侧边栏短标题与分支名 │
-└────────────────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    UI[本地前端资源与页面<br/>页面 mount / Composer 调用者未闭合]
+    PRE[Preload 桥<br/>frame/origin 条件与 ipcRenderer.invoke 代码]
+    MAIN[Electron 主进程<br/>LocalSessions.sendMessage 静态分支]
+    MANIFEST[buildPin 清单<br/>claude.exe.zst 下载元数据]
+    HELPER[Code helper payload<br/>本 MSIX 样本未取得]
+    COWORK[Cowork 服务 / VM<br/>Manifest 与 HCS/VM 代码线索]
+    API[配置的 API / 网关<br/>端点和配置字符串，目标未运行确认]
+    EVENT[事件与 UI 更新<br/>回传 listener / 组件链未闭合]
+    STORE[IndexedDB 会话树<br/>预读/schema 线索；写入者待查]
+
+    UI -. "调用关系候选" .-> PRE
+    PRE -. "IPC 路由候选" .-> MAIN
+    MAIN -. "分支/进程启动待追踪" .-> HELPER
+    MANIFEST -. "下载管理线索" .-> HELPER
+    MAIN -. "Cowork 路径候选" .-> COWORK
+    HELPER -. "请求/认证未捕获" .-> API
+    API -. "响应协议未捕获" .-> HELPER
+    HELPER -. "输出与 IPC 回传未闭合" .-> EVENT
+    MAIN -. "前端订阅/事件转发未闭合" .-> EVENT
+    UI -. "读取已见；写入链未闭合" .-> STORE
 ```
 
 ---
 
-## 二、 阶段 1~3：前端编辑、传输封装与 Preload 帧安全校验
+## 二、 阶段 1~3：前端编辑、传输封装与 Preload frame/origin 条件
 
-### 2.1 前端输入捕获与草稿清除（`cef1e6037-8DivyY4m.js`）
-用户在 ProseMirror + TipTap 构造的输入框中键入内容：
+### 2.1 前端传输函数线索（`cef1e6037-8DivyY4m.js`）
+包内有 ProseMirror + TipTap 依赖；当前 REA 还没有把具体页面挂载、编辑器提交与业务 store 完整连通。下面的 `Kn()` 片段只支持传输函数调用关系：
 - **原子节点提取**：输入框中通过 `@` 引用的文件、目录及 MCP 资源，被解析为结构化的 `attachments` 与 `sessionMentions`。
-- **本地草稿同步清除**：触发发送动作后，代码立即清理 `localStorage.getItem("store:chat-draft:chorus-unified-composer")`，防止用户刷新后出现陈旧草稿。
+- **草稿存储边界**：当前 `ion-dist/index.html` 从 IndexedDB `keyval-store`/`keyval` 预读 `store:chat-draft:chorus-unified-composer`；页面另用 localStorage 读取独立的 `chat-draft-write-signal`。检索未发现文中所称的 `localStorage.getItem("store:chat-draft:chorus-unified-composer")`，发送后是否同步删除草稿仍待追踪。
 - **传输方法 `Kn(t, ...n)` 的逆向切片**：
 ```javascript
 // 摘自 resources/ion-dist/assets/v1/cef1e6037-8DivyY4m.js:22861
@@ -96,8 +60,8 @@ async function Kn(t, ...n) {
 }
 ```
 
-### 2.2 Preload 层的帧一致性与加密通道路由（`mainView.js`）
-`globalThis["claude.web"].LocalSessions.sendMessage` 并不是裸露的 Node.js 函数，而是由 Electron 的 `contextBridge` 在 `mainView.js` 中严密包裹的 IPC 门面：
+### 2.2 Preload 层的帧与 origin 条件（`mainView.js`）
+当前 bundle 中存在由 preload 暴露 `LocalSessions.sendMessage`、调用 `ipcRenderer.invoke()` 的静态代码，也存在 frame 身份和 origin/hostname 条件。下方片段是局部摘录，不是完整允许列表；不要用它推导所有可接受 origin。UUID/通道前缀是路由标识，不是加密证据；本文没有找到 IPC payload 加密实现。
 
 ```javascript
 // 摘自 .vite/build/mainView.js
@@ -106,14 +70,14 @@ var k = "$eipc_message$_6010a08f-a0fa-48b4-99da-0689b9e2de7b_$_claude.web_$_";
 function r() {
   let e;
   try { e = new URL(window.location.href); } catch { return false; }
-  // 1. 严格检查帧令牌是否为顶层 Frame (防 Iframe 劫持)
+  // 1. 比较当前 frame 与 top frame 的标识
   let isTopFrame = ("frameToken" in t.webFrame && t.webFrame.top && "frameToken" in t.webFrame.top)
     ? t.webFrame.top.frameToken === t.webFrame.frameToken
     : t.webFrame.top?.routingId === t.webFrame.routingId;
-    
-  // 2. 严格白名单域名源校验
-  let isValidOrigin = e.origin === "https://claude.ai" || 
-                      e.origin === "app://localhost" || 
+
+  // 2. 静态 origin/hostname 条件（此处只摘录部分逻辑）
+  let isValidOrigin = e.origin === "https://claude.ai" ||
+                      e.origin === "app://localhost" ||
                       e.hostname === "localhost";
   return isTopFrame && isValidOrigin;
 }
@@ -130,10 +94,10 @@ Tn = {
 
 ## 三、 阶段 4：主进程核心路由决议（`index.chunk-Bn6onBlX.js`）
 
-在主进程中，`LocalSessions_$_sendMessage` 被解包并路由至 `LocalSessionManager` 的核心方法 `async sendMessage(e, r, i, s)`：
+当前 bundle 中可见 `LocalSessions.sendMessage` 的主进程处理方法及若干条件分支。下面是静态代码线索，本文没有捕获一次真实调用的分支顺序或返回结果：
 
-### 3.1 预检过滤与内置斜杠命令快速拦截
-在正式进入智能体循环前，主进程执行多重拦截：
+### 3.1 `sendMessage` 中可见的条件分支
+方法代码包含以下检查/分支；其运行时触发频率、先后顺序和完整副作用未验证：
 1. **云端迁移保护**：`this.isMovingToCloud(e)`，若会话正同步至云端，直接拒绝新输入。
 2. **CrashLoop 熔断保护**：
    ```javascript
@@ -141,10 +105,11 @@ Tn = {
      return { delivered: false, reason: "Claude Code keeps crashing on this machine; automatic restarts are paused until the user sends a message." };
    }
    ```
-3. **本地内置 Slash 命令本地拦截（零 Token 消耗）**：
-   - `/remote-control` 或 `/rc`：转入 `this.remoteControlLifecycle.handleRemoteControlCommand(u)`。
-   - `/usage`, `/stats`, `/cost`：转入 `this.handleStatsCommand(u)`。
-   - `/color`：切换控制台色彩主题。
+3. **内置 Slash 命令分支**：
+   - `/remote-control` 或 `/rc` 命中 `handleRemoteControlCommand` 分支线索。
+   - `/usage`、`/stats`、`/cost` 命中 `handleStatsCommand` 分支线索。
+   - `/color` 命中主题相关处理线索。
+   这些本地分支名称本身不证明零 Token 消耗或服务端完全未被调用。
 4. **TokenCap 额度与窗口检查**：
    ```javascript
    let g = await t.Ct();
@@ -154,15 +119,15 @@ Tn = {
    }
    ```
 
-### 3.2 工作目录 (CWD) 存活性物理探测
-如果项目目录在会话进行中被用户移走或从外部卸载，系统执行 `realpath` 探测：
+### 3.2 本地 backend 分支中的 CWD 检查
+代码在 `backend.kind === "local"` 条件下调用 `realpath`，并对 `ENOENT` 分支做处理。该静态片段不证明某个真实会话已触发该路径：
 ```javascript
 if (u.backend.kind === "local") {
   try {
     await fs.promises.realpath(u.cwd);
   } catch (n) {
     if (n?.code === "ENOENT") {
-      // 触发热路径 CWD 丢失自愈或阻断
+      // 记录 CWD 丢失事件并调用对应处理分支
       t.cz("desktop_ccd_hotpath_cwd_gone_detected", { session_id: e, cwd: u.cwd });
       return this.refuseSendForMissingCwd(u, { reason: "The project folder no longer exists." });
     }
@@ -172,42 +137,21 @@ if (u.backend.kind === "local") {
 
 ---
 
-## 四、 阶段 5：智能体进程组派生与凭证隔离机制
+## 四、 阶段 5：Code helper、凭证与 Windows App Job 证据边界
 
-如果会话处于冷启动（Cold Boot）或者后台守护进程失效，系统调用 `HostLoopRunner` 派生 `claude.exe`：
+当前 `app.asar` 的 buildPin 元数据指向单独下载的 Code helper `claude.exe.zst`。MSIX 中的 245 MB `app\Claude.exe` 是 Electron 桌面 host，不能当作该 helper。冷启动、子进程选择和 helper 生命周期仍需沿当前版本调用点追踪。
 
-### 4.1 敏感凭证匿名 FD 写入与物理销毁 (`HostLoopProcessManager.ts`)
-为了防止恶意进程通过 Windows API 遍历磁盘读取 API Key 或 OAuth Token，Claude Desktop 采用了内存级文件描述符隔离方案：
-```typescript
-// 逆向自 index.chunk-YBFVQBQ_.js (HostLoop)
-private stageCredentialFd(token: string): number | null {
-  try {
-    const tempPath = path.join(process.env.TEMP || '.', `ccd_token_${Date.now()}_${process.pid}.tmp`);
-    const fd = fs.openSync(tempPath, 'w+');
-    fs.writeSync(fd, Buffer.from(token, 'utf-8'));
-    
-    // 【关键安全设计】：打开句柄后立即在物理磁盘上 unlink 删除该文件！
-    // 此时操作系统内核仍维持内存中的文件描述符引用，但任何磁盘扫描工具均无法找到该文件！
-    fs.unlinkSync(tempPath);
-    return fd;
-  } catch (err) {
-    return null;
-  }
-}
-```
+### 4.1 凭据 FD 的结论尚未成立
+`HostLoopProcessManager.ts` 是本仓库分析重建稿，不是厂商源文件；其中临时文件、`unlinkSync` 和 FD 处理不能当作产品实现。当前 `2.42304.0.0` ASAR 中没有 `index.chunk-YBFVQBQ_.js` 这一历史 chunk 名，也没有 `stageCredentialFd` 标识。通用 `unlinkSync` 命中不能证明它删除凭据文件；子进程 `spawn` 参数、继承标志和真实凭据来源仍需逐调用点确认。
 
-### 4.2 Windows Job Object 容器强绑定与孤儿回收
-通过 Rust 原生模块 `@ant/claude-native` 将派生的 CLI 子进程加入作业对象：
-```typescript
-// 注入 Windows Job Object，确保父进程异常崩溃时，操作系统内核级联销毁所有派生子进程
-ClaudeNative.joinAppJob(child.pid);
-```
+### 4.2 当前样本有 App Job 线索，但不是“按 PID 强制绑定”证明
+当前 `.vite/build/index.pre.js` 包含一个受 MSIX 状态和配置 flag 控制的 `joinAppJob()` 调用；该调用不传 `child.pid`。`.vite/build/index.chunk-lzaSYO3Q.js` 另含 `isProcessInAppJob(pid)` 检查逻辑，只检查首个观察到的 child，并在结果为否时记录告警。它们是此前 HostLoop 重建稿没有覆盖到的产品级静态线索，但没有证明 Code helper 一定属于该 Job、所有子进程都继承，或父进程退出时一定由内核回收。
 
 ---
 
-## 五、 阶段 6 & 7：双向 Stream-JSON 控制流与交互卡片审批
+## 五、 阶段 6 & 7：消息输入与 Stream-JSON 控制协议线索
 
-CLI Helper 启动后，与主进程通过 `stdin` / `stdout` 维护双向结构化通道。
+主进程 bundle 中可见输入流、子进程管理和结构化消息相关线索；实际 helper payload 缺失，本文也没有运行时捕获进程启动、管道绑定或消息收发。
 
 ### 5.1 用户消息入队 (`enqueueCliInput`)
 ```javascript
@@ -226,81 +170,65 @@ let K = {
 };
 this.enqueueCliInput(u, u.inputStream, K, { machineSent: !p });
 ```
-`u.inputStream.enqueue(K)` 将该结构序列化为单行 JSON，直接写入 `claude.exe` 的标准输入。
+片段显示该消息对象被交给 `u.inputStream.enqueue(K)`。仅凭此处不能确认 `u` 在目标分支中对应哪个子进程、流最终绑定到何种 OS pipe、序列化字节内容或写入是否成功；“直接写入 helper stdin”应等具体 spawn/stream 绑定闭合后再下结论。
 
-### 5.2 工具调用阻断与原生审批卡片流程 (`can_use_tool`)
-当大模型决定调用敏感工具（如 `Bash` 或 `Edit`）时，CLI 触发安全拦截机制：
+### 5.2 `can_use_tool` 名称与审批路径线索
+包内静态字符串/局部代码出现 `can_use_tool`、`local_exec_consent` 和控制响应相关标签。它们支持“存在相关协议/UI 处理代码”的判断；当前证据没有把 helper 输出、主进程 handler、具体审批组件、用户决策和 helper 输入完整串成一次往返。旧图中的按钮名称、字段示例、独立 `WebContentsView`、执行结果与拒绝后的规划行为均不应作为已确认产品行为引用。
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant CLI as claude.exe (Bun Engine)
-    participant Host as Electron Main (AgentSdkControlProtocol)
-    participant Modal as localExecConsent (原生弹窗)
-    participant User as 开发者操作
-
-    CLI->>Host: stdout: {"type":"control_request","subtype":"can_use_tool","tool":"Bash","command":"npm test"}
-    Host->>Modal: 创建独立 WebContentsView 渲染 localExecConsent.js
-    Modal->>User: 弹出原生确认卡片 (展示执行命令、作用域、参数)
-    alt 用户允许 (Approve)
-        User-->>Modal: 点击 "Allow once"
-        Modal-->>Host: IPC invoke("approve_tool")
-        Host->>CLI: stdin: {"type":"control_response","decision":"approved"}
-        CLI->>CLI: 执行 Bash 命令并捕获输出
-    else 用户拒绝 (Deny)
-        User-->>Modal: 点击 "Deny"
-        Modal-->>Host: IPC invoke("deny_tool")
-        Host->>CLI: stdin: {"type":"control_response","decision":"denied","reason":"user_cancelled"}
-        CLI->>CLI: 伪造 ToolResult 错误信息推进下一步规划
-    end
-```
-
-### 5.3 运行时 Token 无感热续约 (`host_auth_token_refresh`)
-当会话进行超过 1 小时，企业网关的 Bearer Token 或 OAuth 凭证可能自然过期。
-- CLI 在长任务中收到推理网关返回的 `401 Unauthorized`。
-- **不中断任务、不报错退出**，而是向 stdout 发射：
-  `{"type":"control_request","subtype":"host_auth_token_refresh"}`
-- Electron 主进程调用 `AuthManager.refreshHostAuthTokenForSdk()` 从远程企业 IDP 换取新令牌。
-- 将新 Token 回传给 CLI，CLI 在内存中刷新连接池凭据并立即无感重试，用户完全无感知。
+### 5.3 `host_auth_token_refresh` 是协议/回调线索，不是 401 热续约证明
+当前包内 SDK wrapper 含 `host_auth_token_refresh` subtype 与 `getHostAuthToken` 回调处理代码。这能证明静态协议分支存在；当前样本没有证明它必定由 401 触发、能向企业 IDP 换新 token、重建连接并无感重试，也没有运行时捕获刷新顺序和失败处理。
 
 ---
 
-## 六、 阶段 8 & 9：多线程并发流式渲染与 GPU 零拷贝画布
+## 六、 阶段 8 & 9：事件分发与 Worker 画布绘制线索
 
-大模型返回的 Server-Sent Events 流被 CLI 解析为细粒度增量，并通过 IPC 发往前端：
+包内存在消息事件发射及前端事件通道线索；当前没有证据确认模型响应的 SSE 如何由 helper 解析、如何经过主进程 IPC 到达具体页面组件：
 
 ### 6.1 主进程广播事件
 ```javascript
 let oe = { type: "message", sessionId: e, message: K };
 this.emit("event", oe);
-// 触发 IPC: e.ipcRenderer.send("LocalSessions_$_onEvent", oe)
 ```
+这里仅证明片段包含本地事件发射；是否由另一 listener 转成 IPC、由哪些页面订阅，仍需沿注册点和调用者追踪。
 
-### 6.2 前端分流至 Web Workers 避免主线程卡顿
-1. **长代码 Shiki 离线高亮 (`highlightWorker-DC5uhXj0.js`)**：
-   - 主线程只负责接收流式文本并追加到虚拟 DOM 节点。
-   - 代码块语言与文本被 `postMessage()` 传递给 Shiki Worker。
-   - Worker 在后台解析 TextMate Grammar，计算出高亮 Token 数组并返回，完全绕过主线程 DOM 计算，杜绝打字与滚动掉帧。
-2. **Computer Use 屏幕视频流零拷贝渲染 (`framebufferCanvasWorker-DX2Rs-io.js`)**：
+### 6.2 Worker 资源线索
+1. **Shiki/TextMate (`highlightWorker-DC5uhXj0.js`)**：包内资源包含相关运行时代码和语法资源。尚未追到具体页面创建 Worker、消息 schema、所有语言加载路径或性能数据；不能据此保证“离线高亮”覆盖或杜绝掉帧。
+2. **帧数据解码与 OffscreenCanvas 绘制 (`framebufferCanvasWorker-DX2Rs-io.js`)**：
    ```javascript
-   // Worker 内部直接利用 ImageDecoder 硬件解码，直通 GPU 显存
+   // 包内代码调用 ImageDecoder；不可据此断言硬件解码或 GPU 零拷贝
    let decoder = new ImageDecoder({ type: mimeType, data: buffer, transfer: [buffer.buffer] });
    let { image } = await decoder.decode();
    ctx.drawImage(image, 0, 0, width, height);
-   image.close(); // 立即释放显存
+   image.close(); // 释放解码帧关联资源；不说明物理显存路径
    ```
 
 ---
 
-## 七、 阶段 10：会话树落盘与异步标题生成
+## 七、 阶段 10：会话树存储结构与标题生成线索
 
-### 7.1 本地 IndexedDB 事务化持久化
-在会话每个轮次（Turn）结束时，前端执行原子写入：
-- 数据库名：`claude-conversation-store`
-- 对象仓库：`trees`
-- 写入键：`session_uuid`，保存完整的树状分支、Token 统计与工具结果。
+### 7.1 本地 IndexedDB 会话树读写线索
+当前入口 `index.html` 预读 `claude-conversation-store` 数据库 `trees` 仓库中与会话 UUID 对应的记录；`shared-25` bundle 中可见 `trees`、`meta` 仓库名、`2.2` schema 标记及迁移/清理路径。这里证明本地会话树存储结构存在，但本稿没有追通写入调用者、事务提交时机、记录字段是否包含所有工具输出/Token 统计、加密方式和保留期限。不能表述为“每轮结束都原子写入完整会话”。
 
 ### 7.2 异步生成会话摘要标题
-如果是该会话的首轮交互，主进程会利用轻量级推理调用触发会话标题生成：
-- 方式 A（标准）：`POST {baseUrl}/v1/messages`，发送极短 Prompt："Summarize this request in 3-5 words"。
-- 方式 B（3P 离线 Mock）：调用 `ThirdPartyMockRouter` 本地 Stub `/api/dust/generate_session_title` 生成本地假标题，完全阻断外部网络探测。
+包内可以观察到标题生成相关路径，但首轮触发条件、实际执行目标和网络结果尚未跟踪：
+- 路径线索 A：包内出现 `/v1/messages` 与标题提示文本；当前未沿调用者确认实际 HTTP 请求、发送时机和目标主机。
+- 方式 B：3P router 中存在以 `/dust/generate_session_title` 结尾的匹配项，并调用包内标题生成函数。存在本地 route 不等于离线运行，也不证明其他请求或整个进程的外网访问被阻断。
+
+## 八、仍未闭合的协议与进程生命周期
+
+```mermaid
+flowchart LR
+    A[主进程消息对象] -. "enqueueCliInput 调用可见" .-> B[u.inputStream]
+    B -. "stream 与 OS pipe 的绑定待确认" .-> C[Code helper payload 缺失]
+    D[buildPin 下载元数据] -. "helper 管理分支待追" .-> C
+    C -. "控制协议标签待运行验证" .-> E[control_request / control_response handlers]
+    E -. "UI 与用户决策往返未闭合" .-> F[审批界面]
+    C -. "端点/认证请求待运行验证" .-> G[/v1/messages / gateway]
+    G -. "响应解析与事件转发未捕获" .-> H[前端消息组件]
+```
+
+图中所有连线都是待补证关系；“控制协议标签”“标题请求字符串”以及 `joinAppJob`/`isProcessInAppJob` 等标识不能单独证明对应运行时分支执行。当前主进程/preload 的专项 REA 图仍为 partial，具体覆盖边界见 [覆盖审计](analysis-coverage-audit-2026-10-18.md)。
+
+## 九、相关前端专题
+
+前端资源、入口分块、Worker 和 IndexedDB 的静态盘点见 [REA 架构与前端深度分析](../rea-architecture-frontend-deep-dive.md) 与 [CDS 设计令牌和前端专题](cds-design-tokens-and-frontend-deepdive.md)。这些专题也没有执行客户端或浏览器运行时测试。

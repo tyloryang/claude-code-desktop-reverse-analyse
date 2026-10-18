@@ -427,6 +427,8 @@ vze = {
 
 ### 4.23 宿主循环 HostLoop 与生命周期管理（`index.chunk-YBFVQBQ_.js`）
 
+本节及其 `2.37337.1.0` 源码重建描述的是历史样本，不应覆盖到仓库中的 `2.42304.0.0`。当前样本另有条件式 `joinAppJob()` 调用和 `isProcessInAppJob(pid)` 检查线索；它们与本节旧版 HostLoop 草图不同，也没有证明每个 Code helper 都加入 Job Object。
+
 REA 静态结果和本仓库重建稿中可见 HostLoop、helper 启动、taskkill、临时凭据文件/FD 与项目目录等名称或分支线索。重建稿调用 `spawn` 时仅传入三个标准 pipe，没有把额外 FD 放入 stdio；因此 FD 继承/交接没有得到证明。失败回退分支可能将 token 放入环境变量。这里不据重建草图推断产品的凭据保护或进程隔离保证。
 
 ### 4.24 stream-json 控制消息与凭据刷新线索（静态）
@@ -517,7 +519,7 @@ bundle 中可见 Claude Agent SDK、`claude.exe` helper 与 `stream-json` 相关
 
 ### 4.32 历史 CLI Helper 样本的 PE 与 Bun 标记观察
 
-此前本机安装的 helper 样本 `%APPDATA%\Claude\claude-code\2.1.260\claude.exe` 大小约 217MB。以下是该历史文件的 PE 头与节表记录，不代表当前仓库 MSIX 中的 helper（当前包样本大小为 245,756,240 字节）：
+此前本机安装的 helper 样本 `%APPDATA%\Claude\claude-code\2.1.260\claude.exe` 大小约 217MB。以下是该历史文件的 PE 头与节表记录。经当前样本复核，MSIX 中 245,756,240 字节的 `app\Claude.exe` 是 `AppxManifest.xml` 指定的 Electron 桌面启动程序，不是 Code helper；当前 Code helper 是 `app.asar` buildPin 元数据指向的独立 `claude.exe.zst` 下载项，实际 payload 不在本仓库 MSIX 文件清单中。不能用桌面 host 的体积或 hash 代替 helper 样本。
 
 ```text
 Machine: 0x8664 (x64), Sections: 13, OptionalHeader Magic: 0x20b (PE32+)
@@ -800,7 +802,7 @@ sequenceDiagram
     Boot-->>Boot: 包内存在 Sentry / 崩溃捕获相关代码
     Boot-->>Policy: HKLM/HKCU policy 读取代码线索
     Policy-->>Boot: managed configuration 相关名称
-    
+
     alt bundle 中出现 3P / bootstrap / app://localhost 分支
         Boot-->>Router: 本地协议注册函数名线索
         Router-->>Boot: app://localhost 资源路径线索
@@ -832,7 +834,7 @@ sequenceDiagram
     IPC-->>HL: helper 启动候选关系
     HL-->>CLI: 重建稿以三个标准 pipe 调用 spawn
     Note over HL,CLI: 重建稿设置 FD 环境变量，但没有把 FD 加入子进程 stdio；凭据交接未证实
-    Note over HL: 重建稿没有 Job Object 绑定调用；只显示 taskkill 回收路径
+    Note over HL: 这是 2.37337.1.0 历史重建稿；当前 2.42304.0.0 有条件式 App Job 线索，但 helper 归属未证实
     CLI-->>API: 包内出现 /v1/messages 等字符串；实际请求未捕获
     API-->>CLI: 网络响应与 SSE 流程未验证
     CLI-->>UI: stream-json 输出处理相关线索
@@ -930,7 +932,7 @@ sequenceDiagram
 | **[ClaudeNativeBindings.ts](deobfuscated/ClaudeNativeBindings.ts)** | `@ant/claude-native/*.node` package metadata | API 名称与形态草图；当前包有原生文件完整性矛盾，行为和安全效果未确认 |
 | **[BuiltinMcpServers.ts](deobfuscated/BuiltinMcpServers.ts)** | `index.chunk-CHpJbW9_.js` (MCP 名称/结构线索) | 7 个 schema 示例；dispatcher 不调用 handler，不是完整目录或可用实现 |
 | **[LocalSessionsController.ts](deobfuscated/LocalSessionsController.ts)** | `index.chunk-CHpJbW9_.js` (`LocalSessions` RPC) | LocalSessions RPC 名称与局部操作分支重建稿；完整状态机未验证 |
-| **[HostLoopProcessManager.ts](deobfuscated/HostLoopProcessManager.ts)** | `index.chunk-YBFVQBQ_.js` (`HostLoop`) | 重建稿未传递凭据 FD，失败回退放入环境变量；没有 Job Object 调用，仅有 taskkill 路径 |
+| **[HostLoopProcessManager.ts](deobfuscated/HostLoopProcessManager.ts)** | `index.chunk-YBFVQBQ_.js` (`HostLoop`, historical sample) | 历史重建稿未证明凭据 FD 交接；当前样本另有条件式 App Job API 线索，但 helper 归属未证实 |
 | **[SurfaceReachabilityMatrix.ts](deobfuscated/SurfaceReachabilityMatrix.ts)** | `index.chunk-CHpJbW9_.js` (`vze`, `bze`) | surface/target 配置数据重建稿；策略完整性与运行效果未验证 |
 
 

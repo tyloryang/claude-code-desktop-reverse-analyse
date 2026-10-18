@@ -9,7 +9,7 @@
 1. 本目录的应用包是 **2.42304.0.0**，原始架构稿分析的是 **2.37337.1.0**。前端 bundle 哈希、目录内容均已变化；原稿应作为旧版记录阅读，不能把旧版文件名和数量直接套到当前包。
 2. 当前 MSIX 分成两块重要的前端代码：`app.asar` 中的 Electron 桌面壳与 preload，和 ASAR 外的 `resources/ion-dist` 大型 Web 应用资源。两者都在包内，但它们的本地存在不等于整个产品可离线完成登录和模型请求。
 3. 当前 `ion-dist` 的 HTML 引导 React 应用，模块清单显示 Zustand、QueryClient、TipTap/ProseMirror 等依赖；CSS 含 Monaco diff 样式。多种 Worker 将语法高亮、画布绘制、压缩等工作从主线程分开。
-4. REA 对当前 `app.asar` 完成了 452 个源文件的分析输入和应用图构建；两个大型源在语义分析阶段触发 worker heap 限制，图覆盖仍不完整。`ion-dist` 单独分析了 6 个指定 JS 文件，另有 3,614 个已盘点文件没有进入该次代码分析。当前 `claude.exe` 只做了通用 PE 资源清点，未进行可执行文件语义/原生代码分析。
+4. REA 对当前 `app.asar` 的初次全量分析覆盖 452 个源文件；两个大型源在语义阶段触发 worker heap 限制。后续又以 2 GiB worker heap 对 6 个主进程/preload 文件做了专项分析，仍有 446 个文件未进入该次语义分析，30,000 节点预算被用满，图保持 partial。`ion-dist` 另一次只分析了 6 个指定 JS 文件，3,614 个文件没有进入那次语义分析。此前报告把 `app\Claude.exe` 错标为 Code helper；它实际是 Electron 桌面启动程序。Code helper 是 buildPin 清单指向的单独下载文件，当前 MSIX 中没有取得该 helper payload。
 5. 这些是静态证据。REA 没有启动 Electron、执行 bundle、触发 IPC、调用网关或证明策略实际生效。
 
 ## REA 是怎样“解析架构”的
@@ -24,7 +24,16 @@ REA 的应用分析不是运行客户端后观察行为，而是从一个固定�
 
 本轮对当前 `app.asar` 的 REA Evidence ID 是 `ev_047a8e39ac1487c8a803f675db5d374a4a4eb9772b487f4e567d00cd93882bf0`；对 `ion-dist` 6 个前端文件的 Evidence ID 是 `ev_d8151593574491f547f089baa1376b2602064febb931203c8132928ef447f58a`，目录 SHA-256 为 `c52bb551a26216395cb6616650b86af315b30c721e547b3c6cf597b194dc2521`。
 
-当前 helper `extracted_msix/app/claude.exe` 的大小为 **245,756,240 字节**，REA 通用 PE 检查 Evidence ID 为 `ev_cabda353e071c89a06596a3b047fc60716947191f2dfc719b7bdb2fe1bb9cbdb`，SHA-256 为 `84b6beb90538fcc401197130f888d121d92a9ce38e493ff7bad3b69cc1d8cc1d`。该次 `inspect-artifact` 只完成 `inventory_artifact`；REA 明确列出 `inspect_managed_artifact` 和 `open_binary` 为未执行的后续探针。因此本文中的 helper 行为线索来自 `app.asar` 的启动/配置代码和包内元数据，不代表已解析 helper 内部实现。
+### 桌面宿主、Code helper 与 Cowork 服务不是同一个二进制
+
+- **桌面宿主（直接观察）**：`AppxManifest.xml` 将 `app\Claude.exe` 声明为 `Application Id="Claude"` 的启动程序；Windows PE 版本资源显示 ProductName `Claude`、FileVersion `2.42304.0`。REA `inspect-electron-fuses` Evidence ID 为 `ev_dcdca099f431131dcee8325abccea52dbb4a97fc852fca098af2fe1986b4b6f8`，SHA-256 为 `84b6beb90538fcc401197130f888d121d92a9ce38e493ff7bad3b69cc1d8cc1d`，在该 PE 中观察到完整 Electron fuse 集。它是桌面 Electron launcher，不是 Code CLI helper。
+- **Code helper（包内清单线索）**：当前 `app.asar` 的 buildPin 元数据列出 `win32-x64` 的 `claude.exe.zst`，清单大小 **95,700,039 字节**、SHA-256 `f0584be0fbaf0853072de7b532e6c4078f5d2c38ea70a4c711032408a78edd8a`。MSIX 文件清单中没有这份压缩 helper payload；桌面 EXE 的 245 MB 大小不能用作 helper 大小或 helper 的原生分析依据。
+- **Electron fuses（静态配置，不等同运行行为）**：`RunAsNode`、`EnableNodeOptionsEnvironmentVariable`、`EnableNodeCliInspectArguments` 为 disabled；`EnableCookieEncryption`、`EnableEmbeddedAsarIntegrityValidation`、`OnlyLoadAppFromAsar`、`GrantFileProtocolExtraPrivileges`、`WasmTrapHandlers` 为 enabled；`LoadBrowserProcessSpecificV8Snapshot` 为 disabled。Fuse 状态不排除应用代码通过其他方式开启调试，也不证明安全策略运行时有效。
+- **Cowork Windows 服务（Manifest 直接观察）**：包声明 `runFullTrust`、`localSystemServices`、`packagedServices`、`unvirtualizedResources` 和 `internetClient` capability；`CoworkVMService` 的 `cowork-svc.exe` 声明为 `StartAccount="localSystem"`、`StartupType="auto"`。清单还为桌面 EXE 和该服务各列出所有 Profile 的 TCP 入站/出站防火墙规则，但没有在规则中限定端口。REA 对 `cowork-svc.exe` 的 PE/CLI 检查 Evidence ID 为 `ev_67da2a1fc0141c0a6ad9611a818a3c2ee7fc86cbab518cc50382fabbc35fe3a2`：x86-64 原生 PE、无 CLI 元数据；Authenticode 签名验证为 Anthropic。它尚未做原生函数分析，清单也不能证明服务正在运行、端口已开放或实际 ACL。
+
+### 本轮补充的 REA 专项语义分析
+
+对当前 `app.asar` 选取 `.vite/build/index.pre.js`、`mainView.js`、`index.chunk-Bn6onBlX.js`、`index.chunk-DNyequwM.js`、`index.chunk-CPEA6dKA.js`、`index.chunk-lzaSYO3Q.js`，以 `--max-heap-mb 2048 --max-semantic-nodes 30000 --max-semantic-nodes-per-file 8000` 分析。Evidence ID 为 `ev_747c33c0fe55845f39d1b5e1d918e9e6775473c08cad837380c69e1250bf2c44`。REA 解析了 6 个 JS 文件、约 11.9 MB 文本、3,209 项 finding，无语法 parse failure；但应用图因 primitive-string 字节预算保持 partial，语义图达到 30,000 节点上限、另记 181,857 个 unknown。IPC 汇总有 1,364 个操作、1,355 个动态通道操作、1,185 次 renderer transmission、176 个 listener，但只有 1 次 transmission 与 main handler 配对、6 次 literal transmission 未配对。它说明 IPC 面非常大且静态配对覆盖很有限，不能把 IPC 命名表当作完整可达链路。
 
 ### 当前包的覆盖限制
 
@@ -34,7 +43,8 @@ REA 的应用分析不是运行客户端后观察行为，而是从一个固定�
 - 当前 `app.asar` 有 5 个完整性矛盾：`node-pty` 的两个 `.node` 文件、内置 `github-mcp-server.exe`、Office 365 MCP 的 `msal-node-runtime.node` 和 `msalruntime.dll`。REA 将观测到的字节标为 `observed-untrusted`。这只能说明声明哈希与当前字节不一致；不能据此认定被篡改，也不能将这些字节当作已验证等价物。
 - `resources/ion-dist` 内没有 `.map` source map 文件。多数业务代码是哈希命名的压缩 bundle，变量、原始组件名和 JSX/TS 源码映射有限。
 - REA 报告指出 `main_window/index.html` 有 2 段 inline JavaScript 没有进入语义分析；动态 IPC 通道、动态属性和运行时注册仍会有未知项。
-- 当前 `claude.exe` 的 REA 检查只保留 PE 根清单/通用字节盘点，并未运行格式专属 managed/native 代码分析。可执行文件大小不能代表分析覆盖深度。
+- 桌面 `Claude.exe` 的 REA 检查目前覆盖通用 PE 清单和 Electron fuses，没有原生反编译；Code helper payload 未从此 MSIX 样本取得。不能把 launcher 的 PE 体积或 fuses 结果移植到 helper。
+- 当前 REA `doctor` 未发现已配置的 Ghidra、Hopper 或 IDA 原生分析 provider；因此 `cowork-svc.exe` 与桌面 host 的原生控制流仍是明确空白。REA CLI 本身可运行，缺少 provider 不会抹掉已完成的 JS/ASAR 证据。
 
 ## 当前版本的桌面结构
 
@@ -98,6 +108,12 @@ flowchart TB
 - **vendor-frame-DfPJ1QmD.js** 含 React DOM 19.2.4 的 **createRoot** 与 **hydrateRoot** 实现；**vendor-query** 含 QueryClientProvider 与缓存脱水/恢复代码。它们确认这些前端运行库随包提供，但本轮静态关系图没有证明哪个具体页面入口调用了哪个 root API。
 - `vendor-all-0-CTKbbUUg.js` 含 `zustand` 与 `useSyncExternalStore` 标记；`vendor-query-Dqcf4jOo.js` 含 `QueryClient`。结合 HTML 的本地 query-cache 预热，可把它理解成“组件状态 + 服务端数据缓存”两层设计。仅凭 vendor 包不能确认每个 store 的业务字段、缓存键或失效规则。
 - `vendor-prosemirror`、`vendor-tiptap` 文件被 HTML preload，表明编辑器相关依赖随包提供。`c5aee9dbd-B55U_qvj.css` 含 `.monaco-editor` 与 `.monaco-diff-editor` 样式，证明 Monaco 相关样式在包内；要确认某页面何时创建编辑器实例，仍需追踪对应懒加载模块和运行时。
+
+### 3.1 会话树持久化是此前遗漏的前端证据
+
+当前 `ion-dist/index.html` 中有一段预读逻辑，以只读事务从 IndexedDB 数据库 `claude-conversation-store` 的 `trees` object store 按会话 UUID 读取记录；同一入口还会从 `keyval-store`/`keyval` 预读 `react-query-cache` 和 `store:chat-draft:chorus-unified-composer`。`shared-25-DP8p7i1Z.js` 还定义 `trees`、`meta` object store 名称与 `2.2` schema 标记，并包含迁移/清理相关函数。
+
+这补上了“前端存在本地会话树存储”的静态证据，但并未证明每轮都原子落盘、具体保存所有工具输出/Token 统计、存储加密方式、清理期限、跨账户隔离或记录在磁盘上的完整内容。需要沿 `shared-25` 的写入 API 与调用方继续建图，再用目标版本本地配置/运行时读取验证。
 
 ### 4. 设计系统与样式
 
