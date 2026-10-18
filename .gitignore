@@ -1,0 +1,9 @@
+# Binary packages and large extracted assets
+*.msix
+extracted_msix/
+*.pak
+*.bin
+*.dat
+node_modules/
+.DS_Store
+Thumbs.db

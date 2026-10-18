@@ -806,3 +806,181 @@ MSIX 内直接打包并注册了全套专用可变字体：
 - 文件头部硬编码嵌入了完整的 8-bit Base64 MP3 音频流（`data:audio/mpeg;base64,//tAwA...`）。
 - 包含完整的 Sprite 碰撞、计分和关卡引擎，用于在离线等待或特定彩蛋时供用户娱乐。
 
+---
+
+## 8. 跨版本演进对比 (2.37337.1 vs 2.42304.0) 与进阶系统时序图
+
+### 8.1 核心版本演进与静态证据对比
+
+| 维度 / 静态特征 | 2.37337.1.0 (历史基线) | 2.42304.0.0 (当前最新 MSIX) | 架构演进与深层意图 |
+|---|---|---|---|
+| **MSIX Package Version** | `Claude_2.37337.1.0_x64` | `Claude_2.42304.0.0_x64` | 内部 `@ant/desktop` 同步升级至 2.42304.0 |
+| **主进程核心 Chunk** | `index.chunk-CHpJbW9_.js` (6.7MB) | `index.chunk-lzaSYO3Q.js` (7.08MB) | 业务逻辑、MCP 协议与 VM 调度膨胀，增加了 356 个动态分块 |
+| **主进程分块数量** | 142 个 chunk | 358 个 chunk | 粒度大幅细化，启动冷路径按需加载（如 SSH/Cowork/Office 独立分流） |
+| **`app.asar` SHA-256** | `6290a54e...` | `8f4d3dec5e4f3ddffb150321060b18807d83a40f3a65618fe4f29325379da9db` | 签名与依赖哈希全面刷新 |
+| **`ion-dist` 资源规模** | 635 个模块 (~78MB) | 3,644 个文件 (116MB .js / 25 个 .css / 5 个 .html) | 前端生态急剧扩张，引入更多 Monaco 语言包与离线本地 Web 应用资源 |
+| **前端入口 Bundle** | `index-C4qJSrNf.js` | `index-D3kGySMO.js` | 升级 React 18/19 hydration 体系，重构 modulepreload 树 |
+| **CSS 语义令牌数量** | 1,045 个 `--cds-*` | 1,070 个 `--cds-*` | 新增 25 个微交互、Git 冲突与高海拔表面（Surface）设计令牌 |
+| **MCP 原生服务** | 基础 12 个服务原型 | 12 个成熟服务 + GitHub MCP + Office 365 Graph MCP | 独立二进制外置化（`github-mcp-server.exe` 20MB, `office365-mcp-stdio.mjs` 7MB） |
+| **Windows 去虚拟化** | 基本注册表排除 | 深度扩展至 Chrome/Edge/Arc/Brave/Island/Prisma 浏览器 Native Messaging | 彻底打通与所有主流 Chromium 内核浏览器的双向通信渠道 |
+
+---
+
+### 8.2 核心系统交互时序图 (Mermaid Sequence Diagrams)
+
+#### 时序图 1：应用启动、策略决议与渲染模式选择（1P vs 3P）
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant OS as Windows OS (Registry/MSIX)
+    participant Boot as Electron Main (index.pre.js)
+    participant Policy as ManagedConfigResolver
+    participant Router as ThirdPartyMockRouter
+    participant Win as BrowserWindow (Main)
+    participant Web as ion-dist React SPA
+
+    OS->>Boot: 启动 Claude.exe (FullTrust)
+    Boot->>Boot: 初始化 Sentry / 遥测 / 崩溃捕获
+    Boot->>Policy: 读取 HKLM/HKCU Policies (SPn)
+    Policy-->>Boot: 返回 ManagedPolicy (3P/Gateway/Telemetry)
+    
+    alt 启用企业内网 3P 模式 (bootstrapUrl 或 thirdPartyMode)
+        Boot->>Router: registerThirdPartyProtocolHandlers()
+        Router->>Boot: 注册 app://localhost 协议拦截
+        Boot->>Win: 创建窗口并加载 app://localhost/index.html
+        Win->>Router: 发起 GET /api/bootstrap
+        Router-->>Win: 返回本地 Mock 身份与网关配置
+        Win->>Web: 启动 React SPA (Zustand + QueryClient)
+    else 标准公网 1P 模式
+        Boot->>Win: 创建窗口并加载 https://claude.ai
+        Win->>Web: 加载线上最新 Web 应用 (claude:// 协议监听)
+    end
+```
+
+#### 时序图 2：Code 会话启动、HostLoop 进程派生与凭证隔离
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as Code 标签页 (React SPA)
+    participant IPC as LocalSessions Controller (RPC)
+    participant HL as HostLoopProcessManager
+    participant FS as 临时文件系统 (NTFS)
+    participant CLI as claude.exe (Bun Binary 217MB)
+    participant API as 推理网关 / Anthropic API
+
+    UI->>IPC: LocalSessions.startSession(cwd, model, effort)
+    IPC->>IPC: 构建环境变量 (bJ: ANTHROPIC_BASE_URL, 托管标记)
+    IPC->>HL: spawnHelper(binaryPath, args, env, authToken)
+    HL->>FS: 写入临时 Token 文件并 openSync 获取 FD
+    HL->>FS: 立即调用 unlinkSync 删除磁盘物理文件 (内存引用保留)
+    HL->>CLI: 派生 claude.exe (注入 CLAUDE_CODE_AUTH_FD 与 stream-json 管道)
+    HL->>HL: joinAppJob(CLI.pid) (加入 Windows Job Object 容器)
+    CLI->>API: 建立流式推理连接 (POST /v1/messages)
+    API-->>CLI: 实时 SSE 消息块
+    CLI-->>UI: stream-json 结构化回传 (Thinking / Output / Tools)
+```
+
+#### 时序图 3：双向 Stream-JSON 控制流（权限审批与 Token 无感刷新）
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CLI as claude.exe Helper
+    participant SDK as AgentSdkControlProtocol
+    participant UI as Electron Main / Renderer UI
+    participant User as 用户交互界面
+
+    Note over CLI,UI: 场景 A：CLI 请求执行敏感工具 (Bash / File Edit)
+    CLI->>SDK: control_request: { subtype: "can_use_tool", tool: "Bash", command: "rm -rf" }
+    SDK->>UI: 触发 local_exec_consent 原生权限卡片
+    UI->>User: 渲染权限审批弹窗 (Allow / Deny)
+    User-->>UI: 点击 "Allow once"
+    UI-->>SDK: 审批通过
+    SDK-->>CLI: control_response: { decision: "approved" }
+    CLI->>CLI: 执行工具并将执行结果写入上下文
+
+    Note over CLI,UI: 场景 B：长任务执行中 Token 遭遇过期 (401 Unauthorized)
+    CLI->>SDK: control_request: { subtype: "host_auth_token_refresh" }
+    SDK->>UI: AuthManager.refreshHostAuthTokenForSdk()
+    UI-->>SDK: 返回最新轮换的 Bearer Token
+    SDK-->>CLI: control_response: { success: true, refreshedToken: "..." }
+    CLI->>CLI: 内存热替换凭证并无感自动重试推理请求
+```
+
+#### 时序图 4：Cowork 虚拟机生命周期、HCS 虚拟化与 MITM 代理
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Main as Electron Main (CoworkVmManager)
+    participant HCS as Windows Host Compute System
+    participant VM as Cowork VM (gVisor Kernel)
+    participant MITM as 本地 MITM 凭证代理 (NSn)
+    participant Egress as 目标外部网络
+
+    Main->>HCS: getHcsStatus() 查询 VirtualMachinePlatform
+    HCS-->>Main: 平台已就绪
+    Main->>Main: 检查本地缓存 userData/vm_bundles/
+    opt 存在增量补丁
+        Main->>Main: applyVmImageDelta() 合成新版 VM 镜像
+    end
+    Main->>HCS: startVM(image, "gvisor")
+    HCS->>VM: 引导轻量级微容器沙箱
+    VM->>MITM: 虚拟机内部 CLI 发起网络请求
+    MITM->>MITM: 执行 NSn() 检查 (白名单: localhost / *.anthropic.com)
+    alt 地址在白名单内
+        MITM->>Egress: 注入 approved oauth-token 并放行流量
+    else 非法外网或跨网段地址
+        MITM-->>VM: 阻断连接并剥离敏感凭据 (DLP 防护生效)
+    end
+```
+
+#### 时序图 5：多线程 Web Worker 渲染管线与 Computer Use 零拷贝画布
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as 渲染主线程 (React)
+    participant HW as highlightWorker (Shiki)
+    participant FW as framebufferCanvasWorker
+    participant GPU as OffscreenCanvas / WebGL
+
+    Note over UI,HW: 文本流式高亮解耦
+    UI->>HW: postMessage({ text: "const a = 1;", lang: "typescript" })
+    HW->>HW: Shiki TextMate tokenize (离线无 DOM 阻塞)
+    HW-->>UI: 返回高亮语法树 (Tokens Array)
+    UI->>UI: 增量补丁更新 DOM (零掉帧)
+
+    Note over UI,FW: Computer Use 屏幕流零拷贝渲染
+    UI->>GPU: transferControlToOffscreen()
+    UI->>FW: postMessage({ canvas: offscreenCanvas, port: messagePort }, [transfer])
+    FW->>FW: ImageDecoder 硬件级并行解码图像帧
+    FW->>FW: 检查 seq > paintedSeq (丢弃陈旧滞后帧)
+    FW->>GPU: ctx.drawImage(image) 直通 GPU 显存
+```
+
+---
+
+## 9. 完整反混淆逆向源码索引与工程映射表
+
+已将主进程、SDK 及底层原生逻辑反混淆、类型化并重构成标准的 TypeScript 工程代码，归档在 `deobfuscated/` 目录下：
+
+| 文件名称 | 源代码位置 | 核心职能与逆向技术点 |
+|---|---|---|
+| **[DlpSecurityFilter.ts](deobfuscated/DlpSecurityFilter.ts)** | `index.chunk-CHpJbW9_.js` (`FFn`, `PFn`, `AFn`) | 敏感凭据/私钥拦截、Unicode 规范化、NTFS ADS 备用数据流遍历阻断 |
+| **[ThirdPartyMockRouter.ts](deobfuscated/ThirdPartyMockRouter.ts)** | `index.chunk-CHpJbW9_.js` (`Z$r`, `X$r`, `U$r`) | `app://localhost` 自定义协议拦截、`/api/bootstrap` 本地 Mock 路由 |
+| **[SessionEnvironmentBuilder.ts](deobfuscated/SessionEnvironmentBuilder.ts)** | `index.chunk-CHpJbW9_.js` (`bJ`, `anthropicWire`) | CLI Helper 环境变量拼装、`ANTHROPIC_BASE_URL` 网关路由、凭据脱敏 |
+| **[AgentSdkControlProtocol.ts](deobfuscated/AgentSdkControlProtocol.ts)** | `index.chunk-C4qJSrNf.js` & `CHpJbW9_.js` | 59 种子类型 `stream-json` 双向控制通道、`host_auth_token_refresh` 动态续约 |
+| **[ShellPtyManager.ts](deobfuscated/ShellPtyManager.ts)** | `index.chunk-DIEpbncU.js` & `ptyHostWorker.js` | ConPTY / node-pty 进程隔离、30 秒 Watchdog 自动 refork、SSH 代理链 |
+| **[CodeHelperDownloader.ts](deobfuscated/CodeHelperDownloader.ts)** | `index.chunk-CHpJbW9_.js` (`installDirFor`, buildPin) | BuildPin 清单校验、SHA-256 哈希目录分级存储、`CLAUDE_CODE_LOCAL_BINARY` 覆盖 |
+| **[ManagedConfigResolver.ts](deobfuscated/ManagedConfigResolver.ts)** | `index.chunk-CHpJbW9_.js` (`SPn`, `QUr`) | Windows 注册表 GPO 策略读取 (`SOFTWARE\Policies\Claude`)、设置层级决议 |
+| **[CoworkVmManager.ts](deobfuscated/CoworkVmManager.ts)** | `index.chunk-CHpJbW9_.js` (`startVM`, `applyVmImageDelta`) | Windows HCS 容器底座、Cowork VM 镜像增量热更新、MITM 白名单凭据拦截 |
+| **[ClaudeNativeBindings.ts](deobfuscated/ClaudeNativeBindings.ts)** | `@ant/claude-native/*.node` (NAPI-RS) | Computer Use 自动化、内核级 `*Beneath` 路径防御、DPAPI、Windows Hello、TPM 签名 |
+| **[BuiltinMcpServers.ts](deobfuscated/BuiltinMcpServers.ts)** | `index.chunk-CHpJbW9_.js` (内置 MCP 注册表) | 12 大内置 MCP 服务器协议定义与集中调度器 (`ccd_view`, `ccd_host`, `terminal` 等) |
+| **[LocalSessionsController.ts](deobfuscated/LocalSessionsController.ts)** | `index.chunk-CHpJbW9_.js` (`LocalSessions` RPC) | UI 面向前台的会话状态机、多模态附件发送、Fork 会话、模型/Effort 调节 |
+| **[HostLoopProcessManager.ts](deobfuscated/HostLoopProcessManager.ts)** | `index.chunk-YBFVQBQ_.js` (`HostLoop`) | 进程组管理、Windows Job Object 强绑定、凭据 FD 匿名化隔离、`taskkill /T /F` 级联终止 |
+| **[SurfaceReachabilityMatrix.ts](deobfuscated/SurfaceReachabilityMatrix.ts)** | `index.chunk-CHpJbW9_.js` (`vze`, `bze`) | 表面隔离执行矩阵 (`chat`, `code`, `cowork`)、宿主与云端执行策略约束决议 |
+
+
