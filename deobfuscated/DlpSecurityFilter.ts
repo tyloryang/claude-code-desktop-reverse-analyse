@@ -1,8 +1,14 @@
 /**
  * @file DlpSecurityFilter.ts
- * @description Deobfuscated Data Loss Prevention (DLP) & Sensitive File Blacklist Filter
+ * @description Analyst sketch of sensitive-file name and path matching clues (DLP-related)
  * Origin: Claude Desktop index.chunk-CHpJbW9_.js (Static REA Analysis)
  */
+/**
+ * Analyst reconstruction from static evidence; not verbatim vendor source or REA output.
+ * Names, types, control flow, and security semantics may be inferred or incomplete.
+ * This file has not been compiled, unit-tested, or runtime-validated.
+ */
+
 
 export namespace DlpSecurityFilter {
   // Sensitive file extensions & filename patterns blacklist
@@ -25,8 +31,8 @@ export namespace DlpSecurityFilter {
   ];
 
   /**
-   * Evaluates whether a target file path contains sensitive credentials or keys.
-   * Applies normalization, prefix stripping, and NTFS Alternate Data Stream (ADS) checks.
+   * Illustrative matcher based on selected static clues; this is not a validated product
+   * policy, complete sensitive-file list, or security control.
    */
   export function isFileAccessPermitted(filePath: string): { permitted: boolean; reason?: string } {
     if (!filePath) return { permitted: true };

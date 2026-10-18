@@ -1,11 +1,18 @@
 /**
  * @file HostLoopProcessManager.ts
- * @description Deobfuscated HostLoop Subprocess Lifecycle & Windows Process Group Manager
+ * @description Analyst reconstruction of selected HostLoop launch/termination code; behavior is not verified.
  * Origin: Claude Desktop index.chunk-YBFVQBQ_.js (`HostLoop`, `spawnClaudeCodeProcess`)
  *
- * Manages native CLI helper execution, Windows Job Object containment,
- * tree-kill fallback via taskkill, and sensitive credential file descriptor isolation.
+ * Known gaps in this sketch: the child is spawned with only three stdio pipes,
+ * the token FD is not explicitly inherited, fallback passes the token in an env var,
+ * and no Job Object assignment is shown. Do not use as a security implementation.
  */
+/**
+ * Analyst reconstruction from static evidence; not verbatim vendor source or REA output.
+ * Names, types, control flow, and security semantics may be inferred or incomplete.
+ * This file has not been compiled, unit-tested, or runtime-validated.
+ */
+
 
 import { ChildProcess, spawn } from 'child_process';
 import * as fs from 'fs';
@@ -26,8 +33,8 @@ export namespace HostLoopProcessManager {
     private killTimeout: NodeJS.Timeout | null = null;
 
     /**
-     * Staging sensitive authentication credentials into an anonymous file descriptor
-     * and immediately unlinking from filesystem to avoid plain-text disk exposure.
+     * Attempts to write a token to a temporary file, open it, and unlink its path.
+     * The sketch does not establish successful deletion, safe inheritance, or cleanup.
      */
     private stageCredentialFd(token: string): number | null {
       try {
@@ -101,7 +108,7 @@ export namespace HostLoopProcessManager {
 
     /**
      * Windows tree-kill invocation to ensure child CLI and any spawned processes
-     * (e.g. bash, node, git) are completely cleaned up.
+     * (e.g. bash, node, git); taskkill is an attempted fallback, not a cleanup guarantee.
      */
     private forceTreeKill(pid: number): void {
       if (process.platform === 'win32') {

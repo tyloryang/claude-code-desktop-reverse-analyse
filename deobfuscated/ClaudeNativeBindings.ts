@@ -1,11 +1,16 @@
 /**
  * @file ClaudeNativeBindings.ts
- * @description Deobfuscated Native Rust Addon Interface (@ant/claude-native)
+ * @description Inferred type sketch for selected native-addon API names.
  * Origin: app.asar.unpacked/node_modules/@ant/claude-native/claude-native-binding.node
  *
- * Based on NAPI-RS compiled binaries exporting 100+ Win32 kernel, security,
- * and display automation APIs for Windows.
+ * The types below are not verified against an ABI or trusted native implementation.
  */
+/**
+ * Analyst reconstruction from static evidence; not verbatim vendor source or REA output.
+ * Names, types, control flow, and security semantics may be inferred or incomplete.
+ * This file has not been compiled, unit-tested, or runtime-validated.
+ */
+
 
 export namespace ClaudeNativeBindings {
   // ==========================================
@@ -56,12 +61,12 @@ export namespace ClaudeNativeBindings {
   }
 
   // ==========================================
-  // 2. Kernel-Level Path Traversal Defense (*Beneath)
+  // 2. Directory-operation API names (*Beneath); ABI and behavior unverified
   // ==========================================
 
   /**
-   * Prevents directory traversal attacks (symlink dereference, `..\..\` path hops)
-   * at the Windows NT handle level by strictly pinning operations beneath a root file descriptor.
+   * Names suggest root-relative directory operations. No implementation, path-containment
+   * guarantee, symlink behavior, or Windows handle semantics are verified by this sketch.
    */
   export interface DirectoryTraversalDefenseApi {
     openRootDir(absoluteRootPath: string): number; // returns root directory handle
@@ -75,34 +80,34 @@ export namespace ClaudeNativeBindings {
   }
 
   // ==========================================
-  // 3. System Credentials & TPM Hardware Attestation
+  // 3. Inferred credential / hardware-related API names; implementation unverified
   // ==========================================
 
   export interface SystemSecurityApi {
-    /** Encrypts arbitrary buffer via Windows Data Protection API (DPAPI) */
+    /** API name suggests DPAPI protection; implementation and data scope are unverified. */
     userDpapiProtect(plaintext: Buffer): Buffer;
-    /** Decrypts DPAPI-protected ciphertext using current Windows user session credentials */
+    /** API name suggests DPAPI unprotection; implementation and data scope are unverified. */
     userDpapiUnprotect(ciphertext: Buffer): Buffer;
 
-    /** Requests biometric authentication prompt via Windows Hello */
+    /** API name suggests a Windows Hello prompt; behavior is unverified. */
     promptWindowsHello(title: string, subtitle: string): Promise<boolean>;
     cancelWindowsHello(): void;
     windowsHelloAvailability(): 'available' | 'notConfigured' | 'unsupported';
 
-    /** Generates or loads client key pair inside TPM via Windows Platform Crypto Provider */
+    /** API name suggests a hardware-key operation; provider and hardware backing are unverified. */
     hardwareKeyGetOrCreate(keyAlias: string): { publicKeyPem: string; isHardwareBacked: boolean };
-    /** Signs payload with TPM-backed private key */
+    /** API name suggests signing; key storage and signing behavior are unverified. */
     hardwareKeySign(keyAlias: string, payload: Buffer): Buffer;
   }
 
   // ==========================================
-  // 4. Windows Job Object Process Containment
+  // 4. Inferred Job Object API names; call sites and behavior unverified
   // ==========================================
 
   export interface JobObjectIsolationApi {
     /**
-     * Binds child CLI process (claude.exe) into the parent application's Windows Job Object.
-     * Ensures all subprocesses terminate cleanly when Claude Desktop exits or crashes.
+     * Inferred API description from names only; this sketch does not verify call sites,
+     * process membership, or child termination behavior.
      */
     joinAppJob(childPid: number): boolean;
     isProcessInAppJob(pid: number): boolean;

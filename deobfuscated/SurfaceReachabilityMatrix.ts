@@ -1,12 +1,17 @@
 /**
  * @file SurfaceReachabilityMatrix.ts
- * @description Deobfuscated Execution Target Matrix & Surface Isolation Policy Resolver
+ * @description Analyst sketch of execution-target matrix and surface-policy names
  * Origin: Claude Desktop index.chunk-CHpJbW9_.js (`vze` surface matrix, `bze` policy gates)
  *
- * Implements surface routing decisions across Chat, Code, Cowork, and Routines,
- * determining whether tasks execute directly on Host (device), in Cowork VM, over SSH,
- * or through cloud execution targets.
+ * The matrix and policy decisions below are an analyst reconstruction, not verified
+ * routing behavior or a security boundary.
  */
+/**
+ * Analyst reconstruction from static evidence; not verbatim vendor source or REA output.
+ * Names, types, control flow, and security semantics may be inferred or incomplete.
+ * This file has not been compiled, unit-tested, or runtime-validated.
+ */
+
 
 export namespace SurfaceReachabilityMatrix {
   export type SurfaceType = 'chat' | 'code' | 'codeRoutines' | 'cowork' | 'coworkRoutines';
@@ -32,7 +37,7 @@ export namespace SurfaceReachabilityMatrix {
       cloud: ['anthropic', 'self-hosted']
     },
     cowork: {
-      device: true, // runs inside local Cowork VM sandbox on device
+      device: true, // static matrix value; execution path was not verified
       cloud: ['anthropic', 'self-hosted']
     },
     coworkRoutines: {

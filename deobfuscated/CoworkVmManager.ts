@@ -1,8 +1,14 @@
 /**
  * @file CoworkVmManager.ts
- * @description Deobfuscated Cowork VM Sandbox & HCS Virtualization Manager
+ * @description Analyst sketch of Cowork VM/HCS-related names and candidate operations
  * Origin: Claude Desktop index.chunk-CHpJbW9_.js (`startVM`, `applyVmImageDelta`, `NSn`)
  */
+/**
+ * Analyst reconstruction from static evidence; not verbatim vendor source or REA output.
+ * Names, types, control flow, and security semantics may be inferred or incomplete.
+ * This file has not been compiled, unit-tested, or runtime-validated.
+ */
+
 
 export namespace CoworkVmManager {
   export interface VmStatus {
@@ -13,40 +19,29 @@ export namespace CoworkVmManager {
   }
 
   /**
-   * Manages Cowork VM sandbox lifecycle, delta patching, and network proxy access.
+   * Illustrative class shape only; this is not a Cowork VM controller implementation.
    */
   export class CoworkVmController {
     constructor(private vmStorageDir: string) {}
 
     public async checkVirtualizationPlatform(): Promise<boolean> {
-      // Interrogates Host Compute System (HCS) status on Windows
-      console.log('[CoworkVM] Checking Hyper-V / VirtualMachinePlatform availability');
-      return true;
+      throw new Error('Analyst reconstruction only; no HCS call is implemented.');
     }
 
     /**
      * Applies differential delta patches to local base VM bundle.
      */
     public async applyVmImageDelta(patchBuffer: ArrayBuffer): Promise<boolean> {
-      console.log(`[CoworkVM] Applying VM image delta patch (${patchBuffer.byteLength} bytes) to ${this.vmStorageDir}`);
-      return true;
+      void patchBuffer;
+      throw new Error('Analyst reconstruction only; no VM image patch is implemented.');
     }
 
     /**
-     * Determines whether network request inside VM is permitted through MITM proxy whitelist (`NSn`).
+     * Proxy policy is not implemented here; the whitelist shape was not verified.
      */
     public isProxyWhitelisted(url: string): boolean {
-      try {
-        const parsed = new URL(url);
-        // Allow localhost, private subnets, and official Anthropic APIs
-        return (
-          parsed.hostname === 'localhost' ||
-          parsed.hostname.endsWith('.anthropic.com') ||
-          parsed.hostname === '127.0.0.1'
-        );
-      } catch {
-        return false;
-      }
+      void url;
+      throw new Error('Analyst reconstruction only; no proxy policy is implemented.');
     }
   }
 }

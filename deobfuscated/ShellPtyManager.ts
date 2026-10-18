@@ -3,6 +3,12 @@
  * @description Deobfuscated PTY Terminal Host Worker & Shell Manager
  * Origin: Claude Desktop index.chunk-DIEpbncU.js & ptyHostWorker.js
  */
+/**
+ * Analyst reconstruction from static evidence; not verbatim vendor source or REA output.
+ * Names, types, control flow, and security semantics may be inferred or incomplete.
+ * This file has not been compiled, unit-tested, or runtime-validated.
+ */
+
 
 export namespace ShellPtyManager {
   export interface PtySpawnOptions {

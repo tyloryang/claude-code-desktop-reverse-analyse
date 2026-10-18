@@ -1,14 +1,19 @@
 /**
  * @file ThirdPartyMockRouter.ts
- * @description Deobfuscated Third-Party (3P) Local API Stub & Protocol Router
+ * @description Partial analyst sketch of selected 3P local-route names.
  * Origin: Claude Desktop index.chunk-CHpJbW9_.js (`Z$r`, `X$r`, `U$r`)
  */
+/**
+ * Analyst reconstruction from static evidence; not verbatim vendor source or REA output.
+ * Names, types, control flow, and security semantics may be inferred or incomplete.
+ * This file has not been compiled, unit-tested, or runtime-validated.
+ */
+
 
 export namespace ThirdPartyMockRouter {
   /**
-   * Installs the custom `app://localhost` protocol handler for custom-3p deployments.
-   * Intercepts local requests to prevent external egress and routes them to ion-dist bundled assets
-   * or local mock API handlers.
+   * Placeholder for the protocol registration path. This function only logs a message;
+   * it does not register an Electron handler or block process-wide network egress.
    */
   export function registerThirdPartyProtocolHandlers(): void {
     // Protocol scheme registration check
@@ -17,7 +22,7 @@ export namespace ThirdPartyMockRouter {
   }
 
   /**
-   * Mock API interception rules for offline/3P mode:
+   * Selected illustrative API-stub examples; not a complete offline route table:
    * - /api/bootstrap
    * - /api/organizations/*/library_submissions
    * - /api/organizations/*/library/discover/browse

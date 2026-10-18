@@ -1,13 +1,18 @@
 /**
  * @file AgentSdkControlProtocol.ts
- * @description Deobfuscated Agent SDK Control Request & Stream-JSON Protocol Handler
+ * @description Analyst sketch of selected Agent SDK control-request and Stream-JSON labels
  * Origin: Claude Desktop index.chunk-C4qJSrNf.js & index.chunk-CHpJbW9_.js
  */
+/**
+ * Analyst reconstruction from static evidence; not verbatim vendor source or REA output.
+ * Names, types, control flow, and security semantics may be inferred or incomplete.
+ * This file has not been compiled, unit-tested, or runtime-validated.
+ */
+
 
 export namespace AgentSdkControlProtocol {
   /**
-   * Complete set of stream-json control request sub-types exchanged between
-   * Claude Desktop and the Claude Code CLI helper process.
+   * Selected subtype names observed in static evidence; this list is not known to be complete.
    */
   export const CONTROL_REQUEST_SUB_TYPES = [
     'apply_flag_settings',

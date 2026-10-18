@@ -3,6 +3,7 @@
 
 > 证据来源：`app.asar`（SHA-256 `6290a54e…`）静态解析 + 解包文本检索。
 > 所有结论为静态观察/推断（REA Evidence `ev_b646af…`），不证明运行时行为。
+> 文中部分命名、控制流和安全意图是从局部片段归纳的假设；后续 `deobfuscated/` TypeScript 文件是分析重建稿，不是厂商原始源码或经过测试的实现。
 
 ## 1. 总体架构
 
@@ -17,7 +18,7 @@
 │                            └─ index.chunk-CHpJbW9_.js (核心,6.7MB)│
 │                                        │  require 142 个 chunk      │
 │  ┌─────────────────────────────────────┴──────────────────────┐    │
-│  │ 主进程子系统（均在 index.chunk-CHpJbW9_.js 内观察到）        │    │
+│  │ 主进程子系统（本轮在 index.chunk 中检索到的静态线索）        │    │
 │  │                                                            │    │
 │  │  · 托管配置   registry/GPO `HKLM\SOFTWARE\Policies\Claude`  │    │
 │  │                + `Policies\ClaudeCode`（Code 会话检测）     │    │
@@ -26,7 +27,7 @@
 │  │  · 模型目录   https://downloads.claude.ai/                  │    │
 │  │                model-catalog/v1/catalog.json（签名,5–15min 轮询）│
 │  │  · 自动更新   autoUpdater / Squirrel-MSIX updater,          │    │
-│  │                disableAutoUpdates 键可阻断                  │    │
+│  │                存在 disableAutoUpdates 配置线索              │    │
 │  │  · Code helper 下载管理 buildPin 清单(版本+校验和+大小),    │    │
 │  │                baseUrl https://downloads.claude.ai/         │    │
 │  │                claude-code-releases,claude-ssh-releases     │    │
@@ -62,7 +63,7 @@
 │     buildPin 版本 52d82f0a…, 平台清单(每平台 checksum+size),        │
 │     win32-x64: claude.exe.zst (~91.9MB 压缩)                       │
 │     下载源 https://downloads.claude.ai/claude-code-releases        │
-│     校验失败→离线安装包内置组件/回退已装版本                        │
+│     bundle 中可见校验与回退相关分支；实际选择路径未验证            │
 │                                                                    │
 │  2) Desktop 用组装 env 启动 helper：函数 bJ() 设置                  │
 │     ANTHROPIC_BASE_URL = e.apiHost ← getApiHost()                  │
@@ -73,15 +74,13 @@
 │     另注入 ANTHROPIC_API_KEY/AUTH_TOKEN(清空后由 secrets 落盘)、    │
 │     CLAUDE_CODE_OAUTH_TOKEN、CLAUDE_CODE_HOST_AUTH_ENV_VAR 等      │
 │                                                                    │
-│  3) 凭证经 writeSessionSecrets 物化到 CCD session-secrets 目录,    │
-│     按 authScheme 决定 env 变量名: bearer→ANTHROPIC_AUTH_TOKEN,    │
-│     x-api-key→ANTHROPIC_API_KEY; anthropicWire() 统一携带         │
-│     baseUrl/defaultAuthScheme/adminHeaders/providerLabel           │
+│  3) bundle 中可见 writeSessionSecrets、凭据类型与 session-secrets │
+│     相关名称；完整凭据交接路径与安全效果未独立验证                │
 │                                                                    │
-│  4) helper 自身即完整 Claude Code CLI 打包:                         │
+│  4) helper 包含 Code CLI 相关能力线索（覆盖范围未完整验证）:       │
 │     端点 /v1/messages(含 beta)、/v1/messages/batches、              │
 │     count_tokens、/v1/complete、files、models、organizations/*、    │
-│     agents/sessions/skills/vaults…（Admin/OAuth 套件完整内置）     │
+│     agents/sessions/skills/vaults…（名称线索，不证明完整可用）     │
 │     内置 env 白名单: ANTHROPIC_BASE_URL、ANTHROPIC_API_KEY…        │
 │     多 provider 变量: *_BEDROCK_/*_VERTEX_/*_FOUNDRY_BASE_URL      │
 │     allowedProviders/custodians 由 managed settings 钉死          │
@@ -122,14 +121,12 @@
 
 ## 3. 与"离线内网部署"相关的静态结论（2.37337.1.0）
 
-- **网关**：`inferenceProvider:"gateway"` + `inferenceGatewayBaseUrl`（readers 含 `code`）→
-  Desktop 以 `ANTHROPIC_BASE_URL` 传给 Code helper；`GET /v1/models` 可选，用于自动发现模型。
-- **关闭 Anthropic 出网**（与 telemetry 文档一致的代码键）：
+- **网关线索**：静态配置中出现 `inferenceProvider:"gateway"`、`inferenceGatewayBaseUrl`、`ANTHROPIC_BASE_URL` 和 `/v1/models`；目标部署的生效条件与完整请求链尚未动态验证。
+- **非必要流量控制线索（不是出口封锁）**：
   `disableAutoUpdates`、`disableEssentialTelemetry`、`disableNonessentialTelemetry`、
   `disableNonessentialServices`、`modelCatalogEnabled:false`（或 `modelCatalogUrl` 内网镜像）。
-- **helper 下载**：Code 会话依赖 `downloads.claude.ai/claude-code-releases` 的 buildPin 清单；
-  离线安装包把 workspace+CLI 打进 MSIX。运行时也可用 `CLAUDE_CODE_LOCAL_BINARY`
-  指向本地可执行文件做覆盖（`[CCD] LOCAL OVERRIDE` 日志标记）。
+  这些键分别关联更新、遥测或目录请求；它们不等同于阻断登录、模型请求或进程级公网出口。
+- **helper 下载线索**：包内出现 `downloads.claude.ai/claude-code-releases`、buildPin 与 `CLAUDE_CODE_LOCAL_BINARY` 分支。它们不证明 Code 在断网时可启动，也不构成稳定受支持的离线安装接口。
 - **托管配置**：Windows 读 `HKLM/HKCU\SOFTWARE\Policies\Claude`（Desktop 键）与
   `SOFTWARE\Policies\ClaudeCode`（Code 会话托管设置）；MDM/GPO 值类型不合法会整块忽略。
 
@@ -155,13 +152,13 @@
 ### 4.3 IPC 桥（帧级安全）
 
 - 通道前缀：`$eipc_message$_7e53d64a-…-…$_claude.internal.ui_$_<Window>_$_<method>`。
-- mainWindow preload 暴露的通道（实测 11 个）：
+- 在 mainWindow preload 中静态清点到的 11 个通道名称（未做运行时调用验证）：
   `AboutWindow_$_{openHelp,getSupport,getAppName,getBuildProps,ancientJournal}`、
   `MainWindowTitleBar_$_{titleBarReady,requestRestartApp,requestReloadMainView,requestMainMenuPopup}`、
   `QuickWindow_$_{requestDismiss,requestSkooch}`。
-- preload 自带 **帧一致性校验**：`webFrame.top.frameToken === webFrame.frameToken`
-  （fallback `routingId`）；main 侧另有 `frame-id`/`process-id`/`sender-frame` 校验
-  （`index.chunk-CHpJbW9_.js` 的 sender-validation-candidate 观测）。
+- preload 代码中可见帧标识比较：`webFrame.top.frameToken === webFrame.frameToken`
+  （fallback `routingId`）；main 侧另有 `frame-id`/`process-id`/`sender-frame` 校验线索
+  （`index.chunk-CHpJbW9_.js` 的 sender-validation-candidate 观测），完整授权效果未验证。
 
 ### 4.4 custom-3p 的 Provider 工厂（配置 → creds）
 
@@ -200,7 +197,7 @@ ANTHROPIC_CUSTOM_HEADERS 追加 anthropic-client-platform: DESKTOP_APP
 凭证投递：`writeSessionSecrets` → `ccd-session-secrets` 目录（runExclusive 互斥、
 fork superseded 清扫）；按 authScheme 选 env 变量名（bearer→`ANTHROPIC_AUTH_TOKEN`，
 x-api-key→`ANTHROPIC_API_KEY`；vertex workforce/helper-script→`ANTHROPIC_CUSTOM_HEADERS`）。
-`LRr()` 支持运行中刷新 bearer（refreshHostAuthTokenForSdk）。
+代码片段出现 `refreshHostAuthTokenForSdk` 等刷新函数名称；刷新请求何时发起、helper 是否成功接收及其重试行为未动态验证。
 3P 下另有 `writeHostCredsFile`（env + `CLAUDE_CODE_HOST_AUTH_ENV_VAR` + 可选
 `ANTHROPIC_BASE_URL` 覆盖，带过期时间与 pid）。
 
@@ -208,9 +205,9 @@ x-api-key→`ANTHROPIC_API_KEY`；vertex workforce/helper-script→`ANTHROPIC_CU
 
 - 清单（编译进 bundle 的 JSON）：`version "52d82f0a…"`；每平台
   `{binary:"claude.exe.zst", checksum, size[, bundle]}`；win32-x64 ≈ 91,878,666 B 压缩。
-- 两份 baseUrl：`https://downloads.claude.ai/claude-code-releases`（helper）与
+- 两份 baseUrl 线索：`https://downloads.claude.ai/claude-code-releases`（helper）与
   `…/claude-ssh-releases`（SSH 侧 helper）；下载按 checksum 校验，
-  失败 → 回退已装版本 / 离线安装包内置 / `CLAUDE_CODE_LOCAL_BINARY` 本地覆盖。
+  bundle 中存在下载失败后的回退/覆盖分支；具体命中条件与离线可用性未验证。
 - 下载安装目录：`storageDir = OOr()`、`vmStorageDir = userData/claude-code-vm`；
   `installDirFor(platform, version, checksum)`。
 - 运行中多版本管理：`hostVersionsInUseThisRun`、marker mismatch 检测、
@@ -229,10 +226,7 @@ x-api-key→`ANTHROPIC_API_KEY`；vertex workforce/helper-script→`ANTHROPIC_CU
 
 ### 4.9 Cowork VM 边界
 
-- Cowork 的 shell/文件操作在 hardened Cowork VM；`vmClaudeDir`（`claude-code-vm`）
-  供 SSH/远程会话内运行 helper；`cliRunsOnThisHost` 决定 env 是否直传（`Wdr` 过滤 SSH 侧）。
-- MITM 代理凭证审批：`NSn()` 仅对 localhost/私有网段的 `ANTHROPIC_BASE_URL` 放行
-  `ANTHROPIC_AUTH_TOKEN/API_KEY` 进 VM approved oauth-token 列表。
+- 包内出现 `vmClaudeDir`、`claude-code-vm`、`cliRunsOnThisHost`、`Wdr` 与 `NSn` 等 VM/代理相关名称；其调用链、策略效果和出站边界未在本轮动态验证。
 
 ### 4.10 托管配置读取（Windows）
 
@@ -244,7 +238,7 @@ x-api-key→`ANTHROPIC_API_KEY`；vertex workforce/helper-script→`ANTHROPIC_CU
 
 ### 4.1.1 3P 模式下的本地 API stub 路由（`X$r()` 内 `h` 数组）
 
-custom-3p 下 ion-dist 发出的 `/api/*` 请求由 `app://` handler 本地应答（不触网）：
+custom-3p 下，列表中的部分 ion-dist `/api/*` 请求由 `app://` handler 本地应答。此观察只覆盖对应路由，不表示进程的全部网络出口均被阻断：
 
 - `/api/bootstrap`（及 `…/app_start`、`…/system_prompts`、`…/current_user_access`）
 - `/api/organizations/<id>/library_submissions(…)`（`sgn` 正则；可被 `plugins.sharingEndpoint` URL 覆盖）
@@ -263,7 +257,7 @@ custom-3p 下 ion-dist 发出的 `/api/*` 请求由 `app://` handler 本地应�
 `app\resources\ion-dist\`（本机解包树只有 ASAR 内四类资源——ion-dist 在
 `app.asar.unpacked` 之外的 `resources/` 由安装包提供，见 AppxBlockMap；静态清单共 635 模块）。
 
-### 4.12 主进程 ↔ 渲染器的类型化 RPC（59 个命名空间）
+### 4.12 主进程 ↔ 渲染器的 IPC/RPC 注册表（静态清点 59 项）
 
 `go(uv,"<Namespace>",…,{methods,stores,events})` 注册表（`index.chunk-CHpJbW9_.js`）：
 Account、Auth、AutoUpdater、BrowserNavigation、CCDScheduledTasks、ChromeExtension、
@@ -274,6 +268,8 @@ LocalSessionEnvironment/Presets、ManagedConfig、Navigation、OsOpenHandlers、
 PluginBridgeMcp、QuickEntry、RemoteControlServing、Resources、SessionPopouts、
 Toast、WebBuild、WindowControl/Layout/State 等 59 个。
 
+此处的 59 是对该版本 bundle 中注册名的静态清点，不等于 59 个运行时均可达、均已挂载或都有类型安全保证。它与 4.19 节的 stream-json subtype 名称是两套不同的清点。
+
 Code 标签页相关的两个关键面：
 - `ClaudeCode`：getStatus / prepare / checkGitAvailable / resolveLocalSettings /
   patchUserSettings / setEnableWorkflows / getPeriodUsage / sandbox 三方法。
@@ -282,7 +278,7 @@ Code 标签页相关的两个关键面：
   applyFlagSettings / createOutputStyle / toggleRemoteControl / shareSession …
   （即 Code 标签页 UI 的完整会话操作面）。
 
-### 4.13 更新器（Windows）
+### 4.13 Windows 更新相关静态线索
 
 - 安装检测：`kfe()` → `"msix"`（`process.execPath` 含 `windowsapps`，`jfe()`）或
   `"squirrel"`；MSIX 包用户代理附加 `MSIX`。
@@ -291,9 +287,9 @@ Code 标签页相关的两个关键面：
     `api.anthropic.com/api/desktop/…/update`；
   - `updateViaUpdatesHost=true` 时改走 `releases.claude.com/api/desktop/…/update`（main origin）；
   - 二进制更新：`downloads.claude.ai/releases/`（followRedirects）。
-- 阻断条件（诊断串）：`disableAutoUpdates=true`、`dangerousMaxVersion`（3P 公开但未记档键）、
+- 代码/诊断字符串中出现 `disableAutoUpdates=true`、`dangerousMaxVersion`（3P 公开但未记档键）、
   `not packaged`、`no squirrel/MSIX updater`。
-- 72 小时重启强制（`autoUpdaterEnforcementHours` 可调 1–72，设了变严格不再等空闲）。
+- `autoUpdaterEnforcementHours` 配置名称和值域线索（1–72）；更新策略触发与重启行为需在目标版本验证。
 
 ### 4.14 Chrome 扩展桥
 
@@ -363,10 +359,10 @@ Desktop 的 Code/Cowork 会话不是裸起 CLI 交互终端，而是把 **Claude
 Agent SDK 选项 → 上述参数 → helper `claude.exe`（stream-json 双向管道）。
 `CLAUDE_CODE_HOST_AUTH_ENV_VAR` + `ANTHROPIC_BASE_URL` env 同 4.6。
 
-### 4.19 SDK ↔ helper 的 stream-json 控制协议（59 个 subtype）
+### 4.19 SDK ↔ helper 的 stream-json subtype 名称清点（静态）
 
 消息帧：`{type:"system", subtype:"…", session_id, …}`；MCP over SDK 走标准
-`initialize`/`notifications/initialized`/`ping` 握手（JSON-RPC 形）。控制子类型全集
+`initialize`/`notifications/initialized`/`ping` 握手（JSON-RPC 形）。以下是静态字符串中观察到的 subtype 名称清单，不保证完整：
 （静态字符串证据）：
 
 `apply_flag_settings、background_tasks、cancel_async_message、channel_enable、
@@ -398,25 +394,23 @@ OAUTH×6、SUBAGENT×6、3P×5 …。Desktop 只把 `GJe` 白名单里的十余�
 （4.6 `bJ()` 表 + `PATH`/`CLAUDE_CODE_ENTRYPOINT`/PROCESS_WRAPPER 等）注入会话；
 其余变量属 CLI 自身运行时开关，不在 Desktop 注入路径上。
 
-### 4.21 helper/VM 的安装目录与离线 preseed 机制
+### 4.21 helper/VM 的安装目录与 preseed 代码线索
 
 - 目录命名：`installDirFor(target, version, checksum)`：
   host → `{storageDir}/{version}/{checksum[:12]}`（`MOr/jOr`，校验和必须是 64 位 sha256，
   取前 12 位十六进制命名安装夹）；vm → `{vmStorageDir}/{version}`。
-- preseed（离线安装包）：`BG() = process.resourcesPath/preseed`；
+- preseed 路径候选：`BG() = process.resourcesPath/preseed`；
   `{preseed}/vm_bundle/{r}.zst`（VM bundle 缓存）与 `{preseed}/claude-code/{platform}/{name}`
   （helper 二进制，`mkr/ukr="claude-code"`）。`ykr()` 把包内 `.zst` 暂存为缓存
   （`.{r}.zst.origin` 记录来源，避免重复暂存）；`vkr()` 启动时检查包内路径，
   命中即用包内二进制（`getHostPreseedInPlacePath`）。
-- **本机这份 MSIX 无 `preseed/` 目录 → 是在线版**；离线版（`/offline/latest/redirect`）
-  的 MSIX 内含 `preseed/claude-code/…` + `preseed/vm_bundle/…`，即官方文档所述
-  "两组件打进安装包、checksum 编译进应用"的落点。
+- **本轮样本未见 `preseed/` 目录**；包内代码存在读取该路径的分支，但样本未提供预置内容。不能据此推断离线安装/启动可行或运行时一定需要联网。
 - 安装检测：`Yr()` = `process.windowsStore` 或 execPath 含 `windowsapps`（`jfe()`）→
   `kfe()` 返回 `"msix"`（否则 `"squirrel"`）；MSIX 下 UA 附加 `MSIX`。
 
-### 4.22 执行目标矩阵与表面(Surface)隔离
+### 4.22 执行目标矩阵相关静态配置线索
 
-在 `index.chunk-CHpJbW9_.js` 中取证到全局执行矩阵 `vze` 与约束表 `bze`：
+在 `index.chunk-CHpJbW9_.js` 中观察到名为 `vze`、`bze` 的矩阵/约束数据候选：
 
 ```js
 vze = {
@@ -428,38 +422,25 @@ vze = {
 }
 ```
 
-- **表面分流**：
-  - `code`（Code 标签页）：在本地通过 `[HostLoop]`（宿主进程循环）直接运行于 Windows 宿主环境；支持切换至远程 `sshHost`。
-  - `cowork`（Cowork 智能体）：强制在本地 Cowork VM（基于 Hyper-V / VirtualMachinePlatform 的轻量虚拟沙箱）中运行，经 MITM 代理白名单审批网络与凭据。
-- **策略阻断条件**（`bze`）：
-  - `disableDesktopLocalSessions`：当 `codeLocalPolicy() === "disabled"` 时，直接拒绝在 `device`（宿主）上启动 Code 会话。
-  - `managed-settings-unreadable`：托管策略解析损坏时，拒绝宿主启动。
-  - `self-hosted-only`：强制所有表面只能路由至自建云基础设施。
+- 数据结构中列出 `code`、`cowork`、`chat` 等 surface 与 `device`、`sshHost`、`cloud` 等目标，并出现 `disableDesktopLocalSessions`、`managed-settings-unreadable`、`self-hosted-only` 等标识。
+- 这些值是静态配置/分支线索，不能单独证明目标组合可用、条件必然生效或所有请求都受该矩阵约束。
 
 ### 4.23 宿主循环 HostLoop 与生命周期管理（`index.chunk-YBFVQBQ_.js`）
 
-Code 会话在宿主上通过 `HostLoop` 管理：
-1. **启动与命令包装**：调用 `Se.binaryPath`（已安装或下载的 `claude.exe`），通过 `t.o0` 拆解为 `Ce.cmd` + `Ce.args`，并挂载 `spawnClaudeCodeProcess = ue`。
-2. **进程组控制与强杀**：
-   - Windows 下记录 PID，应用退出时若子进程未正常退出，先发 `SIGTERM`，超时 `5000ms` 后使用 `taskkill /pid <PID> /T /F` 强制树状终止，避免孤儿 CLI 滞留后台。
-3. **敏感凭据文件描述符隔离**：尝试将 OAuth token / API key 写入临时文件并打开只读 FD，随后立即从磁盘 unlink 删除原文件（`Failed to stage OAuth token fd; falling back to env`）。
-4. **工作目录与保护挂载**：自动探测并初始化 `.claude/projects/` 项目记忆与缓存目录。
+REA 静态结果和本仓库重建稿中可见 HostLoop、helper 启动、taskkill、临时凭据文件/FD 与项目目录等名称或分支线索。重建稿调用 `spawn` 时仅传入三个标准 pipe，没有把额外 FD 放入 stdio；因此 FD 继承/交接没有得到证明。失败回退分支可能将 token 放入环境变量。这里不据重建草图推断产品的凭据保护或进程隔离保证。
 
-### 4.24 双向控制流 Control Request 与运行时凭据无缝刷新
+### 4.24 stream-json 控制消息与凭据刷新线索（静态）
 
-内嵌 Claude Agent SDK 与 `claude.exe` helper 之间通过 `stream-json` 维护强类型双向控制通道。取证到完整的 `control_request` 子类型集：
+bundle 中可见 Claude Agent SDK、`claude.exe` helper 与 `stream-json` 相关代码线索，并出现多种 `control_request` 名称。当前静态分析不证明子类型清单完整、每个分支可达或凭据轮换运行时无中断：
 
-- `host_auth_token_refresh`：**关键内网特性**。当 CLI helper 在长任务中遭遇 API 401/403 或网关 Token 过期时，不退出会话，而是向父进程 Desktop 发送 `control_request`；Desktop 调用 `refreshHostAuthTokenForSdk()` 触发后台刷新并返回新 Token，CLI 收到后立即在内存中切换凭据重试。
-- `can_use_tool`：当 CLI 需要执行 Bash、文件写入或 MCP 工具且处于交互许可模式时，向 Desktop 发起工具权限请求，Desktop 渲染原生确认卡片并回传用户决策。
-- `elicitation`：用户提问与表单参数交互。
-- `mcp_message`：MCP 协议双向中继。
-- `ui_copy` / `ui_prompt_fill` / `ui_prompt_read` / `ui_prompt_suggest`：桌面端输入框与剪贴板的深层集成。
+- `host_auth_token_refresh`、`can_use_tool`、`elicitation`、`mcp_message`、`ui_copy`、`ui_prompt_fill`、`ui_prompt_read`、`ui_prompt_suggest`：静态代码中出现的 subtype/处理名称线索。
+- 这些名称提示可能存在凭据刷新、工具审批、表单、MCP 和 UI 交互控制分支；本轮没有验证 401/403 触发条件、消息结构、完整处理链或会话无中断重试。
 
 ### 4.25 内置 MCP 服务生态（Desktop ↔ Code 协同控制面）
 
-桌面端的主进程向 Code helper 进程注入了一整套内置 MCP 服务器（每个具备固定 UUID），这些工具构成了 Desktop 界面与 Agent 的直接控制接口：
+历史样本中观察到多组 MCP 服务名、工具名和 UUID 相关字符串。下表归纳的是静态名称及其可能职责，不证明所有服务均被注入、注册、启用或可调用：
 
-| MCP 服务器 | 核心工具 (Tools) | 业务职责 |
+| 静态服务名 | 工具名称线索 | 可能职责（由命名推测） |
 |---|---|---|
 | `ccd_view` | `show_pane`, `close_pane`, `get_layout`, `set_transcript_view` | 控制侧边面板（diff, file, terminal, pr, tasks, plan, artifact）与查看模式 |
 | `ccd_window` | `open_session_in`, `close_split`, `get_window_layout`, `set_sidebar_collapsed` | 桌面分屏、独立弹窗、侧边栏折叠展开 |
@@ -474,81 +455,69 @@ Code 会话在宿主上通过 `HostLoop` 管理：
 | `scheduled-tasks` | `list_scheduled_tasks`, `create_scheduled_task`, `update_scheduled_task`, `run_scheduled_task` | 自动化例行任务（Routines）调度与执行 |
 | `Claude Browser` | `preview_click`, `preview_fill`, `preview_snapshot`, `preview_network` 等 | 浏览器沙箱预览与页面交互自动化 |
 
-### 4.26 Rust 原生扩展层（`@ant/claude-native`）深度逆向
+### 4.26 原生扩展 API 名称线索（`@ant/claude-native`）
 
-位于 `app.asar.unpacked/node_modules/@ant/claude-native/claude-native-binding.node`，基于 NAPI-RS 编写，向 Electron 导出 100+ 个底层 Windows API：
+包中存在 `@ant/claude-native` 扩展元数据与相关 API 名称。当前样本的若干 unpacked 原生文件与 ASAR 声明哈希不符，REA 将其标为 `observed-untrusted`；因此下列名称只作为静态线索，不能确认二进制实现、调用成功或安全效果：
 
-1. **Computer Use (屏幕自动化)**：
+1. **Computer Use 相关名称**：
    - 捕捉与几何：`cuListDisplays`, `cuDisplayForPid`, `cuListOpenWindows`, `cuMaskedWindowRects`, `cuExcludedWindowRects`
    - 控制注入：`moveMouse`, `mouseButton`, `mouseScroll`, `typeText`, `typeTextPaced`
    - 进程与图标：`cuGetAppIcon`, `cuListInstalledApps`, `cuFocusedControl`, `cuAppUnderPoint`
-2. **内核级路径逃逸防护（Directory Traversal Defense）**：
+2. **路径操作名称**：
    - 导出 `*Beneath` 族函数：`openBeneath`, `statBeneath`, `mkdirBeneath`, `renameBeneath`, `rmdirBeneath`, `unlinkBeneath`, `openRootDir`。
-   - 确保文件系统工具只能在允许的根目录下递归操作，在 Windows NT 句柄/内核级切断 `..\..\` 符号链接及路径跳跃逃逸。
-3. **系统凭据与硬件证明（Windows Security & TPM）**：
-   - 本地加密：`userDpapiProtect` / `userDpapiUnprotect`（调用 Windows DPAPI 保护本地持久化会话秘密）。
-   - 生物识别：`promptWindowsHello`, `cancelWindowsHello`, `windowsHelloAvailability`。
-   - TPM 硬件证明：`hardwareKeyGetOrCreate`, `hardwareKeySign`（基于 Windows CNG / Platform Crypto Provider 生成并签署客户端硬件密钥）。
-4. **作业对象容器（Job Object Isolation）**：
-   - `joinAppJob`, `isProcessInAppJob`：将所有 CLI helper 及其派生子进程强绑定进同一个 Windows Job Object，父进程崩溃或退出时由 Windows 内核一次性连带回收。
-5. **系统虚拟化状态控制（Hyper-V / HCS）**：
-   - `getHcsStatus`, `enableWindowsOptionalFeature`：底层直连 Host Compute System，无需调用外部 powershell 即可查询和启用 Windows 容器虚拟化。
-6. **无子进程注册表读写**：
-   - `readRegistryValues`, `writeRegistryValue`, `writeRegistryDword`, `deleteRegistryKey`，原生 Win32 API 读写策略，规避外部 `reg.exe` 触发的安全监控拦截。
+   - 这些导出名称与参数形态显示其设计目标是限制根目录下的路径操作；仅凭名称不能证明 Windows 符号链接/路径逃逸都被阻断。需对目标版本的可信二进制做实现审查和安全测试。
+3. **凭据与硬件密钥名称**：
+    - 可见 `userDpapiProtect` / `userDpapiUnprotect`、`promptWindowsHello`、`hardwareKeyGetOrCreate`、`hardwareKeySign` 等标识；不能据名称确认实际保护机制、密钥是否有硬件 backing 或其调用范围。
+4. **Job Object 名称**：
+   - `joinAppJob`、`isProcessInAppJob` 是包内观察到的 API 名称；静态命名不能证明所有 helper 均已加入 Job Object 或退出时必然由内核回收。
+5. **虚拟化相关名称**：
+   - 可见 `getHcsStatus`、`enableWindowsOptionalFeature` 等标识；具体实现和系统状态变更未在本分析中验证。
+6. **注册表相关名称**：
+   - 可见 `readRegistryValues`、`writeRegistryValue`、`writeRegistryDword`、`deleteRegistryKey` 等标识；不能据此推断其调用方式或规避安全监控的意图。
 
-### 4.27 内置外挂 MCP 服务与技能包
+### 4.27 MCP 服务与技能资源线索
 
-- **GitHub MCP 独立服务**：`resources/github-mcp/github-mcp-server.exe`（20MB 原生二进制，独立作为 Stdio MCP Server 运行）。
-- **Office 365 / Microsoft Graph MCP**：`resources/office365-mcp/` 内含 `office365-mcp-stdio.mjs`（7.0MB）、`msalruntime.dll`、`msal-node-runtime.node`，通过微软官方身份库直连企业 Microsoft Graph。
+- **GitHub MCP 资源**：包中可见 `resources/github-mcp/github-mcp-server.exe`；文件存在不证明服务实际启动或可用。
+- **Office 365 / Microsoft Graph MCP 资源**：`resources/office365-mcp/` 含相关脚本和原生依赖；其中部分字节存在完整性矛盾，不能据包内文件推断登录成功、服务连通或可用能力。
 - **内置预打包技能（Bundled Skills）**：`resources/bundled-skills/`：
   - `docx.skill` (160KB)、`pptx.skill` (169KB)、`xlsx.skill` (153KB)、`pdf.skill` (22KB)、`pdf-reading.skill` (7.9KB)、`frontend-design.skill` (8KB)
-  - `manifest.json` 声明全部属于 `tier: "always"`，装机即具备办公文档生成与多模态解析能力。
+  - `manifest.json` 中可见 `tier: "always"` 字段；这只是包内清单值，不证明技能已加载、工具可调用或无需网络。
 
-### 4.28 敏感文件黑名单与数据防泄漏 (DLP) 机制
+### 4.28 敏感文件/路径匹配代码线索（DLP 相关）
 
-在 `index.chunk-CHpJbW9_.js:3069000` 取证到了完整的敏感文件拦截系统：
-- **静态拦截名录**（函数 `FFn` / 数组 `wFn`, `TFn`, `EFn`）：
+在 `index.chunk-CHpJbW9_.js` 的记录偏移附近观察到敏感文件名/路径匹配代码片段。以下归纳仅描述该片段，不等于完整 DLP 覆盖或运行时拦截保证：
+- **字符串/规则线索**（函数与数组标识为分析记录中的名称）：
   - **私钥与证书**：`.pem`, `.key`, `.p12`, `.pfx`, `.keychain`, `.keychain-db`, `.kdbx`, `.ppk`, `.jks`, `.p8`, `.ovpn`, `id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`。
   - **密码与浏览器隐私**：`cookies`, `cookies.sqlite`, `login data`, `logins.json`, `web data`, `local state`, `key4.db`, `cert9.db`, `signons.sqlite`。
   - **云服务与包管理器凭证**：`.aws/credentials`, `application_default_credentials.json`, `credentials.db`, `msal_token_cache.json`, `.netrc`, `.git-credentials`, `.npmrc`, `.pypirc`, `.pgpass`, `.my.cnf`, `.databrickscfg`, `.vault-token`, `wallet.dat`, `kubeconfig`。
-  - **环境配置**：所有以 `.env` 开头或结尾的文件。
-- **高级绕过防御算法 (`AFn` / `PFn`)**：
-  - 自动解包剥离点文件伪装前缀（如将 `dot_env` 还原为 `.env`，剥离 `encrypted_`, `private_`, `literal_`, `create_` 等前缀）。
-  - 剥离 `.tmpl`、`.literal` 等模板后缀后再做敏感性判定。
-  - **Windows 专用防护**：阻断 NTFS 备用数据流（ADS, Alternate Data Streams，检测包含 `:` 的路径）和 macOS `..namedfork` 穿透。
-  - **触发动作**：在 Agent 文件读取及文件预览启动时做拦截，上报 `desktop_launch_preview_file_access_prompt`，对高危文件直接判为 `decision: "admin_policy_deny"`。
+  - **环境配置**：片段中出现 `.env` 相关匹配规则。
+- **路径/文件名规范化线索 (`AFn` / `PFn`)**：
+  - 静态片段显示针对 `dot_env`、`encrypted_`、`private_`、`literal_`、`create_` 等变体的处理分支；完整规则及可达性未验证。
+  - 片段还出现 `.tmpl`、`.literal` 等后缀处理名称；不据此推断可防止所有绕过方式。
+  - 片段还出现点文件变体、模板后缀、冒号路径与 `..namedfork` 等处理分支；是否完整覆盖 ADS 或路径绕过需由可信实现与测试确认。
+  - `desktop_launch_preview_file_access_prompt`、`admin_policy_deny` 等标识可作为事件/结果线索；实际触发位置、调用关系及策略效果未在本轮运行验证。
 
-### 4.29 本地凭据双层加密存储体系 (DPAPI & safeStorage)
+### 4.29 凭据保护相关代码线索（DPAPI 与 safeStorage）
 
-- **跨 Profile 交换凭据**：通过原生模块 `@ant/claude-native` 的 `userDpapiProtect` / `userDpapiUnprotect` 进行保护，密文附加前缀 `anthropic.claude.crossProfileSecret.v1:`，利用当前 Windows 用户的登录凭据进行加解密。
-- **持久化配置加密存储 (`ex` / `tx` 类, 偏移 2113813)**：
-  - 基于 Electron 的 `safeStorage`（在 Windows 上底层基于 DPAPI），封装函数 `lGt(e)`（加密输出 base64）和 `uGt(e)`（输入 base64 解密）。
-  - 加密覆盖范围：网关 SSO Token、MSAL 微软身份缓存（`msal-cache-v1:`）、Bedrock SSO Token（`rT`）、GitHub 插件 Token、自建 MCP 授权凭据。
-  - **故障降级与安全策略**：若 `safeStorage.isEncryptionAvailable()` 为 `false`，代码会抛出 `SafeStorageUnavailableError` 或警告 `safeStorage unavailable; not persisted (process-memory only)`，**绝不允许将未加密的鉴权信息写入持久化磁盘**。
+静态代码中出现 DPAPI API 名称、Electron `safeStorage` 引用、凭据类型标记及加解密封装候选。由于相关原生字节存在完整性矛盾，且本轮没有追完每种凭据的读写调用链，不能把这些线索概括为已确认的“双层加密体系”。
 
-### 4.30 Cowork 虚拟机沙箱架构与生命周期 (`startVM`)
+- 可搜索到 `anthropic.claude.crossProfileSecret.v1:`、`msal-cache-v1:` 等前缀或凭据标识；这只能证明字符串存在。
+- `safeStorage.isEncryptionAvailable()`、`SafeStorageUnavailableError` 与 `not persisted` 等名称/日志线索显示存在加密可用性分支候选；不证明所有写盘路径 fail-closed，也不排除其他存储路径。
 
-在 `index.chunk-CHpJbW9_.js:4294000` 取证到了轻量虚拟化环境的完整底层细节：
-- **虚拟化内核**：Cowork VM 内部采用 **gVisor** 容器内核，启动命令调用 `g.startVM(i, _, v, "gvisor", ...)`。
-- **Windows 虚拟化接口 (HCS)**：
-  - Windows 环境通过微软 Host Compute System (HCS) 管理轻量 VM。
-  - 原生调用 `Ci()?.getHcsStatus()` 检测缺失的 Windows 虚拟机功能，异常时捕获 HCS 错误码并提示开启 `VirtualMachinePlatform`。
-- **镜像差量热更新 (`applyVmImageDelta`)**：
-  - 虚拟机镜像包 `claudevm.bundle` 存放在 `userData/vm_bundles/`。
-  - 原生代码支持 `applyVmImageDelta`：当本地存在旧版 VM 基础镜像时，仅下载差量 patch 并在本地应用合成，大幅降低网络流量消耗。
-- **MITM 凭据拦截网 (`NSn`)**：
-  - 宿主与虚拟机内部的通信通过内部代理拦截，宿主明确只对同源或私有地址放行凭证注入，防止凭证从虚拟机内部逃逸到公网。
+### 4.30 Cowork VM 相关静态引用（`startVM`）
 
-### 4.31 数据保留周期与合规审计冻结 (Retention & Legal Hold)
+在 `index.chunk-CHpJbW9_.js` 的记录偏移附近观察到 HCS/VM 相关代码与配置字段；静态片段不足以还原完整生命周期，且本轮未启动 VM：
+- 包内可见 `gvisor`、HCS 状态、`VirtualMachinePlatform`、`claudevm.bundle`、`vm_bundles` 与 `applyVmImageDelta` 等名称/路径。
+- 这些线索提示存在 Cowork 虚拟化及镜像管理相关实现，但不证明目标机器可启动 VM、差量合成成功或具体内核配置已生效。
+- 代理与凭据过滤相关代码名称不构成网络隔离、出口封锁或凭据不会外泄的证明；应以目标版本网络策略和运行时抓包验证。
 
-在配置 Schema 中发现了企业级数据生命周期管理：
-- `codeSessionRetentionDays`：Code 标签页会话的本地保留天数（默认 90 天）。
-- `coworkSessionRetentionDays`：Cowork 智能体任务会话的本地保留天数（默认 90 天）。
-- `sessionRetentionHold: true`（司法冻结 / 审计保护）：开启后 `failClosedValue: true`，全局暂停并阻断所有后台清理和过期丢弃任务，确保会话数据完全固化用于离线审计。
+### 4.31 会话保留相关配置名称
 
-### 4.32 CLI Helper 底层封装解密：基于 Bun Compile 的单一原生二进制
+配置 schema/代码字符串中出现 `codeSessionRetentionDays`、`coworkSessionRetentionDays`、`sessionRetentionHold` 与 `failClosedValue` 等标识。默认值、具体保留语义、覆盖范围和审计效果需沿调用链并在目标版本运行验证；字段名本身不证明数据已按期删除或进入 legal hold。
 
-对本机实际落盘的 217MB `claude.exe`（位于 `%APPDATA%\Claude\claude-code\2.1.260\claude.exe`）进行 PE 头部与段表（Section Table）逆向分析证实：
+### 4.32 历史 CLI Helper 样本的 PE 与 Bun 标记观察
+
+此前本机安装的 helper 样本 `%APPDATA%\Claude\claude-code\2.1.260\claude.exe` 大小约 217MB。以下是该历史文件的 PE 头与节表记录，不代表当前仓库 MSIX 中的 helper（当前包样本大小为 245,756,240 字节）：
 
 ```text
 Machine: 0x8664 (x64), Sections: 13, OptionalHeader Magic: 0x20b (PE32+)
@@ -561,17 +530,17 @@ Machine: 0x8664 (x64), Sections: 13, OptionalHeader Magic: 0x20b (PE32+)
   .bun       raw_size=125,942,784  virt_size=125,942,674  (Bun 编译打包资产段)
 ```
 
-- **底层打包机制**：`claude.exe` 并非传统的使用 pkg 或 Node.js SEA (Single Executable Application) 打包，而是**通过 `bun build --compile` 直接将整个 Claude Code CLI 工具集与 JavaScript 模块深度编译为单一二进制文件**。
-- **签名证据**：在偏移 `0x5790a00` 处的 `.bun` 段末尾，精准抓取到了 **`---- Bun! ----`** 标志性尾随签名。该段占据了高达 125.9MB 的空间，封装了 CLI 运行所需的全部脚本逻辑、依赖库及嵌入式资产。
-- **四层物理隔离体系**：
++ **打包线索**：PE 节表含 `.bunblt` 与 `.bun` 节，且记录到 `---- Bun! ----` 标记；这些静态特征与 Bun 编译产物相符，但不能证明构建命令、输入内容或整个运行时组成。
++ **静态字节观察**：在记录的 `0x5790a00` 偏移附近找到 `---- Bun! ----` 字符串，`.bun` 节大小约 125.9MB。它表明文件内含 Bun 相关嵌入数据，不足以证明所有脚本、依赖都完整封装或特定功能可运行。
+- **四层组件关系示意（不代表物理隔离）**：
   ```text
-  [Layer 1: 本地视图层]  app://localhost (React SPA，预编译在 resources/ion-dist/)
-         │ (通过 59 个强类型 RPC 命名空间通信)
-  [Layer 2: 桌面调度层]  Electron 主进程 (node.exe 宿主，执行 app.asar 业务调度)
-         │ (通过 stdio 管道交换双向 stream-json 协议，包含 59 个控制子类型)
-  [Layer 3: 智能体引擎]  独立的 217MB claude.exe (Bun 编译的原生二进制，运行于宿主)
-         │ (当处于 Cowork 智能体模式时，向下一层下沉)
-  [Layer 4: 容器隔离层]  Cowork VM (Hyper-V / gVisor 微虚拟机，走本地 MITM 白名单代理)
+  [Layer 1: 本地视图层]  app://localhost 与 claude.ai 相关静态路径
+         │ (IPC/RPC 注册名清点与 stream-json subtype 清点是不同集合)
+  [Layer 2: 桌面调度层]  Electron 主进程与 preload
+         │ (包内可见 stdio / stream-json 相关实现线索；运行路径未捕获)
+  [Layer 3: 智能体引擎]  claude.exe helper（PE/Bun 特征随样本而异）
+         │ (宿主、VM 等目标由静态配置/分支线索表示)
+  [Layer 4: 容器层]      Cowork VM/HCS 相关资源与代码引用（运行未验证）
   ```
 
 ## 5. 覆盖与未定项（REA limitation 摘要）
@@ -583,28 +552,28 @@ Machine: 0x8664 (x64), Sections: 13, OptionalHeader Magic: 0x20b (PE32+)
 - 635 个模块中 7 个选中深析，其余 436 个仅清单级覆盖。
 - 所有结论均为静态语法观察：IPC 动态通道、运行时注册、执行顺序未验证。
 
-## 6. 核心模块源码美化与反混淆落地文件 (TypeScript)
+## 6. 核心模块分析重建稿 (TypeScript)
 
-已将主进程与 SDK 核心逻辑反混淆、变量重命名、补充强类型及业务注释，固化于 `rea-reports/deobfuscated/` 目录下：
+以下是依据主进程/SDK 静态线索编写的阅读辅助稿，位于 `deobfuscated/`；不是厂商源码或 REA 自动反编译结果，类型、控制流和行为未经编译或运行验证。文件级边界见 [重建稿说明](deobfuscated/README.md)：
 
 1. **[DlpSecurityFilter.ts](deobfuscated/DlpSecurityFilter.ts)** (7.8KB)
    - 还原 `PFn`, `FFn`, `AFn`, `DFn`, `bE`。
-   - 包含 Unicode NFKC 规范化、尾随空白/点剥离、dotfile 解混淆、NTFS ADS 备用数据流阻断、以及完整敏感文件名/路径序列黑名单。
+   - 重建稿包含 Unicode 规范化、路径变体和敏感名称的示意分支；规则覆盖和运行时拦截未验证。
 2. **[ThirdPartyMockRouter.ts](deobfuscated/ThirdPartyMockRouter.ts)** (7.4KB)
    - 还原 `Z$r`, `X$r`, `U$r`。
-   - 包含 `app://localhost` 协议安装、`window.__DESKTOP_3P_PUBLIC_CONFIG__` 动态 HTML 注入、以及 3P 纯内网模式对 `/api/bootstrap`、`/i18n`、`/library` 的本地拦截 Mock 路由表。
+   - 重建稿记录部分 `app://localhost` 与 API 路由线索；其注册函数不证明协议/路由已安装，也不能证明 3P 模式离线或阻断外连。
 3. **[SessionEnvironmentBuilder.ts](deobfuscated/SessionEnvironmentBuilder.ts)** (5.2KB)
    - 还原 `bJ` 环境组装器与 `anthropicWire()` 网关连接上下文。
-   - 包含 `ANTHROPIC_BASE_URL` 网关注入、API Key 清空脱敏、`CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` 托管标记、以及标准 `/v1/messages` 请求头构建。
+   - 重建稿整理 `ANTHROPIC_BASE_URL`、凭据变量和托管标记线索；生效时机与真实 helper 请求头未在运行时验证。
 4. **[AgentSdkControlProtocol.ts](deobfuscated/AgentSdkControlProtocol.ts)** (7.2KB)
    - 还原 `handleControlRequest`、`processControlRequest` 及双向 `stream-json` 管道调度。
-   - 包含 `can_use_tool` 权限卡片审批调度、`host_auth_token_refresh` 运行时无感 Token 动态刷新通道。
+   - 重建稿列出 `can_use_tool` 与 `host_auth_token_refresh` 等标签；审批和刷新完整流程未验证。
 
 
 
 ## 7. 前端架构与界面设计细节深度剖析
 
-基于 `resources/ion-dist/`（约 78MB 本地 Web 应用产物）与 `.vite/renderer/main_window/`（主窗口渲染外壳）的全面反混淆与逆向解构：
+本章针对历史样本 `2.37337.1.0` 的静态资源和压缩 bundle 做文本/局部代码观察；约 78MB、文件名和 CSS 清点仅适用于当时样本。依赖存在不等于页面调用，局部代码也未完整追成组件—状态—API 链。当前 `2.42304.0.0` 的前端证据见 [REA 前端深度分析](rea-architecture-frontend-deep-dive.md) 与 [CDS 专题](docs/cds-design-tokens-and-frontend-deepdive.md)。
 
 ### 7.1 双容器前端渲染拓扑 (Dual-Container Architecture)
 
@@ -614,7 +583,7 @@ Machine: 0x8664 (x64), Sections: 13, OptionalHeader Magic: 0x20b (PE32+)
 │                                                                                │
 │  ├─ 原生窗口边框控制: -webkit-app-region: drag (窗口拖拽区)                     │
 │  ├─ 标题栏 (TitleBar): MainWindowPage-Dg0RuIiZ.js (暗色/亮色自适应标题栏)       │
-│  ├─ 骨架屏占位器: index.html (行间注入 SVG 骨架形状，首帧即刻绘制避免白屏)      │
+│  ├─ 骨架占位标记: index.html (静态 HTML/SVG 与脚本；启动时序未测量)           │
 │  │                                                                            │
 │  └─ 核心内容视图容器 (WebContentsView / iframe)                               │
 │      │                                                                        │
@@ -624,51 +593,48 @@ Machine: 0x8664 (x64), Sections: 13, OptionalHeader Magic: 0x20b (PE32+)
 │ │                                                                          │  │
 │ │ ├─ 状态中枢: Zustand (响应式 Store) + TanStack Query (服务端状态缓存)     │  │
 │ │ ├─ 编辑系统: TipTap + ProseMirror (富文本提示词输入框)                   │  │
-│ │ ├─ 代码/Diff: Monaco Editor + Shiki (Web Worker 离线语法高亮)            │  │
+│ │ ├─ CSS 含 Monaco 样式；存在 Shiki/TextMate worker 相关代码线索           │  │
 │ │ ├─ 动画引擎: Framer Motion (弹窗、抽屉折叠与微交互)                      │  │
 │ │ └─ 渲染引擎: Tailwind CSS + Claude Design System (1045 个 --cds-* 令牌)     │  │
 │ └──────────────────────────────────────────────────────────────────────────┘  │
 └────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-1. **首屏渲染零白屏技术（Boot Placeholder）**：
-   在 `main_window/index.html` 头部，直接使用微秒级原生 JS 在 `document.documentElement` 执行形状绘制（`paintShapes`），计算屏幕 DPI 缩放并绘制侧边栏与骨架屏轮廓，完全绕过了 React 初始化和 CSS 加载时间。
+1. **首屏占位结构（Boot Placeholder）**：
+   `main_window/index.html` 包含较早运行的 `paintShapes` 行内脚本与骨架相关标记。静态位置说明它先于部分模块脚本出现，但没有实测时间，也不能据此断言完全绕过 CSS/React 或消除白屏。
 2. **多窗口分流机制**：
    除了 `main_window`，前端拆分了独立的轻量级渲染窗口：
    - `find_in_page`: 页面内查找栏（独立 `WebContentsView` 悬浮子视图，预加载 `findInPage.js`）。
-   - `local_exec_consent`: 危险命令或工具执行时的系统原生级确认弹窗。
-   - `quick_window`: 快捷唤起悬浮窗（类似 Spotlight）。
+   - `local_exec_consent`: 包内存在该辅助窗口/页面名称；其触发条件和确认流程未在本轮运行验证。
+   - `quick_window`: 包内存在快捷窗口相关资源；具体交互行为未验证。
    - `about_window` / `buddy_window`。
 
 ### 7.2 状态管理与数据流架构
 
-在 `resources/ion-dist/assets/v1/vendor-*.js` 依赖块中提取出核心状态体系：
-1. **客户端全局状态：Zustand (`vendor-all-0-GGdiWMtM.js`)**
-   - 采用原子 Store 模式（`getState()`, `subscribe()`, `useStore()`），负责侧边栏伸缩、活动侧边窗格（`diff` / `file` / `terminal` / `tasks` / `plan`）、输入框草稿以及会话布局记忆。
-2. **服务端异步状态与流式缓存：TanStack React Query (`vendor-query-D2BgdJkH.js`)**
-   - 负责历史会话列表分页、项目文件索引、知识库与动态设置的缓存及自动失效重拉。
-3. **可达性与表面决议器（Reachability Reducer，`c0a41a7b3-DnAy6YSK.js`）**：
+在历史样本的 `vendor-*.js` 依赖块中可见 Zustand、React Query 等库及部分 reachability 标识。它们支持“相关依赖/名称随包提供”的判断，不足以单独确认具体 store 字段、query key、产品页面或失效行为。
+1. **Zustand 依赖标记**：`getState()`、`subscribe()`、`useStore()` 等名称可见；业务 store 的页面映射未完整追踪。
+2. **React Query 依赖标记**：可见 QueryClient 相关名称；缓存的业务数据、失效条件与重拉行为未完整追踪。
+3. **可达性名称候选（`c0a41a7b3-DnAy6YSK.js`）**：
    ```typescript
-   function useReachability() {
+    // 说明性伪代码，不是 bundle 原文或已验证的产品 API
+    function useReachability() {
      return {
-       reach: {
-         code: isCodeAllowed,           // 是否允许进入 Code 标签页
-         cowork: isCoworkAllowed,       // 是否启用 Cowork 虚拟机沙箱
-         cloudTaskViaHub: isCloudActive // 是否允许将任务分发至云端
-       },
+        reach: { code, cowork, cloudTaskViaHub },
        codeSettled: isCodeSettled,
        codeSessionRoute: activeSessionRoute
      };
    }
    ```
 
-### 7.3 Claude Design System (CDS) 视觉设计体系深度解析
+### 7.3 Claude Design System (CDS) 样式表观察
 
-在 `MainWindowPage-BD9CWQ83.css`（239KB）与核心全局样式表 `c6a992d55-CNGsCU46.css`（1.72MB）中，反编译提取出了完整的 **Claude Design System (CDS)** 工业级工程实现：
+在该历史样本的 CSS 资产中可见 Claude Design System (CDS) 相关自定义属性与主题规则。静态盘点不等于完整的设计系统实现或运行时样式覆盖：
 
-#### 7.3.1 1045 个 `--cds-*` 深度语义设计令牌全景分类
+#### 7.3.1 历史样本中 `--cds-*` 名称的词法清点
 
-CDS 摒弃了硬编码 HEX/RGB，全量采用层次分明的语义令牌网络：
+本节的 1,045 是该历史样本当时统计的不同名称数；定义和引用混计，不代表运行时激活的变量或官方令牌目录：
+
+> 下表是历史人工分类稿；类别的边界和数量没有在当前样本上重算，名称可能跨类或仅为引用，不能作为精确令牌目录。
 
 | 命名空间 (Prefix) | 令牌数量 | 典型令牌与职责 | 设计体系解析 |
 |---|---|---|---|
@@ -682,9 +648,9 @@ CDS 摒弃了硬编码 HEX/RGB，全量采用层次分明的语义令牌网络�
 | **物理动力学 (Motion)** | 19 个 | `--cds-dur-base/fast/sheet/slow`, `--cds-ease-out/overshoot/snap`, `--cds-btn-spring` | 弹簧阻尼与物理动效曲线（超调回弹 overshoot、瞬态捕捉 snap） |
 | **控件度量与间距** | 80+ 个 | `--cds-pad-*`, `--cds-gap-*`, `--cds-radius-*`, `--cds-h-control-*`, `--cds-panel-*` | 严格基于 4px/8px 网格的紧凑度量标准 |
 
-#### 7.3.2 原生自适应系统明暗色与光学光晕补偿 (Dark/Light System)
+#### 7.3.2 明暗主题规则与字体轴线索（静态）
 
-桌面端通过 Electron 的 `nativeTheme.themeSource` 与 `nativeTheme.shouldUseDarkColors` 直连 Windows OS 主题，向 HTML 注入 `<html class="cds-root" data-mode="system">`，并在 CSS 构筑了三重自适应机制：
+静态包内出现 Electron `nativeTheme` API、`data-mode` 标记和 CSS 明暗主题选择器。它们提示存在系统主题分支，但此处没有运行时观测证明调用顺序或三类模式都生效：
 
 ```
 [操作系统偏好: Windows 暗色模式]
@@ -692,22 +658,21 @@ CDS 摒弃了硬编码 HEX/RGB，全量采用层次分明的语义令牌网络�
        ▼
 <html class="cds-root" data-mode="system">
        │
-       ├─ (1) 纯纯浅色硬选: .cds-root[data-mode=light] ─→ 浅色米白高对比令牌
-       ├─ (2) 纯纯深色硬选: .cds-root[data-mode=dark]  ─→ 深色极夜高对比令牌
+        ├─ (1) data-mode=light 选择器与相应 CSS 规则
+        ├─ (2) data-mode=dark 选择器与相应 CSS 规则
        └─ (3) 系统自适应:   @media (prefers-color-scheme: dark) {
                               :where([data-mode=system] .cds-root) {
-                                重新映射全部语义令牌 (零 JS 开销，微秒级瞬时同步)
+                               CSS 媒体查询规则（运行时响应与覆盖未测量）
                               }
                             }
 ```
 
-1. **差异化非反转重映射 (Semantic Remapping)**：
-   绝不使用暴力的 CSS `filter: invert()`，而是为暗色模式精准调配色彩。例如 Git 状态色：
+1. **主题变量线索**：
+   CSS 可见明暗选择器及部分 Git 状态色变量示例；本轮没有检查所有样式，也不推断整体配色策略：
    - 浅色模式：`--cds-text-git-added: #1e9e3c`（深绿保可读性），`--cds-text-git-removed: #cd2054`。
    - 深色模式：`--cds-text-git-added: #32d74b`（荧光亮绿穿透黑底），`--cds-text-git-removed: #ff2c56`。
-2. **字体光学膨胀补偿机制（The GRADE Compensator）**：
-   在黑色背景上显示白色文本时，人眼会因**光渗效应 (Halation / Irradiation Effect)** 觉得白字比黑字显得更粗、膨胀且刺眼。如果简单降低 `font-weight`，会导致文字换行抖动（Layout Shift）。
-   CDS 借助可变字体的 **`"GRAD"`（Grade，级差）轴** 进行补偿：
+2. **字体轴规则线索**：
+   CSS 的部分暗色系统主题选择器同时引用 `"GRAD"` 和字重变量。它可能用于调节字形外观；本轮未验证设计意图、字体轴支持或布局影响：
    ```css
    @media screen and (prefers-color-scheme: dark) {
      :where([data-mode=system] .cds-root) :is(b, strong):where(:not([class*=font])) {
@@ -716,50 +681,42 @@ CDS 摒弃了硬编码 HEX/RGB，全量采用层次分明的语义令牌网络�
      }
    }
    ```
-   **在深色模式下，CDS 将文字 Grade 轴调小，使笔画在视觉上收敛、去刺眼，但字符水平度量 (Horizontal Metrics) 绝对保持 0 像素偏差，彻底杜绝明暗切换时的文本跳动！**
+    静态 CSS 显示暗色系统主题选择器引用 `GRAD` 与 `--cds-font-grad`。视觉变化、字宽与主题切换布局影响，需以实际字体文件和目标浏览器测量；此处不能由 CSS 规则单独证明。
 
-#### 7.3.3 全套 Anthropic 专有可变无衬线与衬线排版体系 (Typography)
+#### 7.3.3 字体资源与排版变量线索
 
-MSIX 内直接打包并注册了全套专用可变字体：
-- **`AnthropicSans` (无衬线)**：`AnthropicSans-Roman-Variable-DDVos-BJ.woff2` (118KB) + `Italic` (129KB)，用于交互界面、代码注释、按钮与导航。
-- **`AnthropicSerif` (衬线体)**：`AnthropicSerif-Roman-Variable-2VcCjn5t.woff2` (165KB) + `Italic` (163KB)，用于 Claude 回复的长篇文本与思维链。
+该样本文件清单和 CSS 中出现以下字体资源/变量名称；具体页面的字体选择、字体轴元数据和视觉效果仍需单独验证：
+- **`AnthropicSans` / `AnthropicSerif`**：样本清单中可见相应命名的 WOFF2 资源；具体页面用途未由本轮调用链验证。
 - **排版多轴参数 (Multi-Axis Control)**：
-  - **`wght` (Weight)**：`font-weight: 300 800;`，支持 300 到 800 之间任意浮点数粗细无级变换。
+  - **`wght` (Weight)**：CSS 中出现 `font-weight: 300 800` 范围声明；目标字体文件实际支持范围需检查字体元数据。
   - **`opsz` (Optical Size，光学尺寸)**：
     ```css
     .font-claude-response-heading {
       font-family: var(--font-claude-response);
-      font-variation-settings: "opsz" 20; /* 1.25rem 标题专属笔画比例 */
+      font-variation-settings: "opsz" 20; /* 规则示例，不代表页面实际调用 */
     }
     .font-claude-response-title {
       font-family: var(--font-claude-response);
-      font-variation-settings: "opsz" 28; /* 1.75rem 大标题强化端庄与衬线锐利感 */
+      font-variation-settings: "opsz" 28; /* 规则示例，不代表页面实际调用 */
     }
     ```
-    光学尺寸根据字号物理缩放微调字怀与字偶距，大字精致庄严，小字宽绰清晰。
-  - **禁用特定连字**：`font-feature-settings: "dlig" 0;`，强制关闭歧义偶合连字，确保技术讨论中符号与代码排版的纯粹性。
-- **排版分流机制**：
-  - 用户界面控件：`--font-claude-response: var(--font-ui)`（`anthropic-sans`）。
-  - Claude 输出正文：`--font-claude-response: var(--font-anthropic-serif)`。呈现类似精美出版物与高端文学期刊的阅读体验。
+    上述属性展示设置值；字体文件对该轴的支持和渲染结果未验证。
+  - CSS 中出现 `font-feature-settings: "dlig" 0;`；作用页面与视觉效果未验证。
+- CSS 中存在 `--font-claude-response`、`--font-ui` 与 `--font-anthropic-serif` 等变量名；排版分流页面及设计效果尚未验证。
 - **前沿 CSS Web 标准深度实践**：
-  - **CSS Container Queries**：`@container (width >= 56rem)` 与 `100cqw`，彻底摆脱传统窗口 `@media`，让任何悬浮窗格内部组件按物理像素弹性折叠。
-  - **CSS Color Module Level 4**：全量采用 `color-mix(in srgb, var(--neutral) 28%, transparent)` 进行混色。
-  - **CSS Text Box Trim**：`text-box: trim-start cap alphabetic`，精准削去大写字母和基线上下方冗余的行间距，实现真正的设计工具级网格贴合。
-  - **CSS Anchor Positioning**：`anchor-name: --titlebar-drag-spacer`、`position-anchor`，脱离传统 absolute 计算，实现原生浮动定位。
+  - **CSS Container Queries**：历史 CSS 中出现 `@container` 与 `100cqw`；规则覆盖范围和组件运行时折叠行为需在目标页面确认。
+  - **CSS Color Module**：样式表中存在 `color-mix()` 表达式；当前样本的匹配次数见前端专题报告，不代表所有颜色都通过它混合。
+  - **CSS Text Box Trim**：CSS 中出现 `text-box: trim-start cap alphabetic`；目标 Chromium 版本支持情况和视觉效果未实测。
+  - **CSS Anchor Positioning**：包内出现 `anchor-name` / `position-anchor` 字符串；浏览器支持与页面运行效果未测。
 
-### 7.4 富文本输入框架构 (The Composer)
+### 7.4 富文本编辑器依赖线索 (The Composer)
 
-输入框基于 **ProseMirror + TipTap**（`vendor-prosemirror-*.js` / `vendor-tiptap-*.js`）打造：
-- **胶囊节点（Pill Nodes）**：支持 `@` 唤起结构化引用的文件、文件夹或 MCP 资源胶囊，在光标移动与退格时作为不可分割的原子节点处理。
-- **斜杠指令系统**：输入 `/` 触发命令菜单并挂载快捷操作。
-- **智能粘贴检测**：大段代码自动识别语法并折叠为代码块片段卡片，图片/PDF 自动识别并在输入框内生成可预览的缩略图挂载块。
+历史样本的 HTML/bundle 清单中出现 ProseMirror 与 TipTap 依赖。胶囊节点、斜杠菜单、代码或附件粘贴行为需要具体组件调用链或运行时验证；本节不把依赖名称当成交互功能证明。
 
 ### 7.5 代码查看与 Diff 审阅系统
 
-1. **深度嵌入 Monaco Editor (`c5aee9dbd-*.css`)**：
-   前端直接嵌入了 VS Code 同款的 Monaco 编辑器内核（`.monaco-diff-editor`），在侧边栏的 `diff` 窗格中提供精准的双栏/单栏文件对比、语法语义高亮与 MiniMap 缩略图。
-2. **多线程 Shiki 语法高亮引擎 (`highlightWorker-DC5uhXj0.js`，1.57MB)**：
-   长文本代码在主线程进行实时正则高亮会导致打字与滚动掉帧。Claude 将基于 TextMate 语法的 **Shiki 高亮引擎整体移入专用 Web Worker**，流式生成时主线程只做纯文本接收，Worker 异步完成高亮树计算并传回最小 DOM 差异。
+1. 历史样本 CSS 中出现 `.monaco-editor` / `.monaco-diff-editor` 样式名；它能说明样式资源存在，不能单独证明页面创建了 Monaco 实例或提供特定 Diff/MiniMap 交互。
+2. `highlightWorker` 资源中出现 Shiki、TextMate 等标记，支持“包内包含语法高亮相关代码”的判断。其调用点、主线程工作量、输出格式与性能收益未在本轮完整追踪或测量。
 
 ### 7.6 多线程并发渲染管线 (Web Workers Pipeline)
 
@@ -767,16 +724,16 @@ MSIX 内直接打包并注册了全套专用可变字体：
 
 | Worker 文件 | 核心职责与工程亮点 |
 |---|---|
-| **`highlightWorker-DC5uhXj0.js`** (1.57MB) | Shiki 离线语法高亮引擎，解耦代码块解析开销。 |
-| **`framebufferCanvasWorker-DX2Rs-io.js`** (2KB) | **Computer Use 零拷贝画布渲染**（细节见下）。 |
-| **`completionGzipWorker-Q_JtDKxH.js`** (591B) | 流式数据 gzip 解压，减少进程间传输内存占用。 |
-| **`rumEncoder.worker-D2VjCHUL.js`** (64KB) | 用户交互时序日志离线编码与批处理。 |
-| **`wasm-B9ZqxnKj-vq9qxLPw.js`** (622KB) | WebAssembly 高性能计算与校验加速。 |
-| **`worker-portable-nQ-kv3bB.js`** (213KB) | 便携运行时辅助线程。 |
+| **`highlightWorker-DC5uhXj0.js`** (1.57MB) | 含 Shiki/TextMate 相关名称；调用范围和性能收益未验证。 |
+| **`framebufferCanvasWorker-DX2Rs-io.js`** (约 2KB) | 帧解码、序号检查与 `OffscreenCanvas` 绘制线索；不证明 GPU 零拷贝。 |
+| **`completionGzipWorker-Q_JtDKxH.js`** (约 0.6KB) | 静态代码使用 `CompressionStream("gzip")` 压缩 `Uint8Array`；调用场景未完全追踪。 |
+| **`rumEncoder.worker-D2VjCHUL.js`** (64KB) | 存在 RUM worker 资源；是否启动及遥测目的地未验证。 |
+| **`wasm-B9ZqxnKj-vq9qxLPw.js`** (622KB) | 存在 WebAssembly 相关资源；调用范围与性能效果未分析。 |
+| **`worker-portable-nQ-kv3bB.js`** (213KB) | 存在 portable worker 资源；本轮未做语义分析。 |
 
-#### `framebufferCanvasWorker` 的零拷贝渲染实现：
-1. **OffscreenCanvas 离线画布接管**：主线程创建 `<canvas>` 并调用 `transferControlToOffscreen()`，直接将 GPU 渲染上下文交付 Worker。
-2. **硬件解码与跳帧防御**：
+#### `framebufferCanvasWorker` 中的帧处理线索（静态观察）：
+1. Worker 收到画布/帧消息后，出现 `ImageDecoder` 或 `createImageBitmap`、`OffscreenCanvas` 绘制调用，以及旧序号帧检查。
+2. 这些 API 名称和调用片段不证明硬件解码、直通 GPU、零拷贝，也不证明帧到达顺序或性能收益。
    ```javascript
    if (typeof ImageDecoder !== "undefined") {
      let decoder = new ImageDecoder({ type: mimeType, data: buffer, transfer: [buffer.buffer] });
@@ -789,22 +746,19 @@ MSIX 内直接打包并注册了全套专用可变字体：
 ### 7.7 思考过程 (Thinking Process) 与工具卡片流式渲染器
 
 1. **思维链状态机与折叠判定 (`c05b96c7f-*` / `ca2ef848d-*`)**：
-   - 维护 `thinking`（明文思考）与 `redacted_thinking`（密文安全思考）。
-   - 内置 `Jf(block)` 函数判定思维块是否为空或包含有效可打印字符。
-   - 捕获 `start_timestamp` 与 `stop_timestamp`，在卡片右上角实时动态渲染耗时指示器（如 `Thought for 12 seconds`）。
-2. **工具卡片格式化映射表 (`cb6930dae-BT4W5w7v.js`)**：
-   前端维护了清晰的字典映射，将底层原始 JSON 转化为交互式卡片：
+    - bundle 中出现 `thinking`、`redacted_thinking`、`start_timestamp`、`stop_timestamp` 等字段名称及相关函数片段；数据的实际展示规则和隐私语义未完整验证。
+2. **工具名称/标签映射线索 (`cb6930dae-BT4W5w7v.js`)**：
+   静态资源中出现以下工具名与 UI 标签相关字符串；完整组件映射和运行时渲染未验证：
    - `mcp__ccd_view__show_pane` → 窗格切换标签（Showing the diff pane）
    - `mcp__ccd_host__open_in_editor` → 编辑器联动卡片
    - `mcp__computer-use__app_key` → 原生键帽 UI
    - `mcp__Claude_Browser__preview_screenshot` → 交互式内嵌缩略图
 
-### 7.8 隐藏彩蛋：复古像素游戏引擎 (`clawdQuestEngine-D01k-Uz3.js`)
+### 7.8 游戏相关资源线索 (`clawdQuestEngine-D01k-Uz3.js`)
 
 在 `.vite/renderer/main_window/assets/clawdQuestEngine-D01k-Uz3.js`（1.23MB）中：
-- **Clawd Quest**：内置的 2D 像素复古冒险小游戏。
-- 文件头部硬编码嵌入了完整的 8-bit Base64 MP3 音频流（`data:audio/mpeg;base64,//tAwA...`）。
-- 包含完整的 Sprite 碰撞、计分和关卡引擎，用于在离线等待或特定彩蛋时供用户娱乐。
+- 文件名与 bundle 字符串中出现 Clawd Quest、像素素材/游戏相关标记及内嵌音频数据。
+- 本轮未运行该资源或追踪其入口；不能确认其完整功能、触发方式或是否用于离线等待。
 
 ---
 
@@ -812,23 +766,25 @@ MSIX 内直接打包并注册了全套专用可变字体：
 
 ### 8.1 核心版本演进与静态证据对比
 
-| 维度 / 静态特征 | 2.37337.1.0 (历史基线) | 2.42304.0.0 (当前最新 MSIX) | 架构演进与深层意图 |
+| 维度 / 静态特征 | 2.37337.1.0 (历史样本) | 2.42304.0.0 (当前仓库样本) | 直接可观察的差异（不推断意图） |
 |---|---|---|---|
-| **MSIX Package Version** | `Claude_2.37337.1.0_x64` | `Claude_2.42304.0.0_x64` | 内部 `@ant/desktop` 同步升级至 2.42304.0 |
-| **主进程核心 Chunk** | `index.chunk-CHpJbW9_.js` (6.7MB) | `index.chunk-lzaSYO3Q.js` (7.08MB) | 业务逻辑、MCP 协议与 VM 调度膨胀，增加了 356 个动态分块 |
-| **主进程分块数量** | 142 个 chunk | 358 个 chunk | 粒度大幅细化，启动冷路径按需加载（如 SSH/Cowork/Office 独立分流） |
-| **`app.asar` SHA-256** | `6290a54e...` | `8f4d3dec5e4f3ddffb150321060b18807d83a40f3a65618fe4f29325379da9db` | 签名与依赖哈希全面刷新 |
-| **`ion-dist` 资源规模** | 635 个模块 (~78MB) | 3,644 个文件 (116MB .js / 25 个 .css / 5 个 .html) | 前端生态急剧扩张，引入更多 Monaco 语言包与离线本地 Web 应用资源 |
-| **前端入口 Bundle** | `index-C4qJSrNf.js` | `index-D3kGySMO.js` | 升级 React 18/19 hydration 体系，重构 modulepreload 树 |
-| **CSS 语义令牌数量** | 1,045 个 `--cds-*` | 1,070 个 `--cds-*` | 新增 25 个微交互、Git 冲突与高海拔表面（Surface）设计令牌 |
-| **MCP 原生服务** | 基础 12 个服务原型 | 12 个成熟服务 + GitHub MCP + Office 365 Graph MCP | 独立二进制外置化（`github-mcp-server.exe` 20MB, `office365-mcp-stdio.mjs` 7MB） |
-| **Windows 去虚拟化** | 基本注册表排除 | 深度扩展至 Chrome/Edge/Arc/Brave/Island/Prisma 浏览器 Native Messaging | 彻底打通与所有主流 Chromium 内核浏览器的双向通信渠道 |
+| **MSIX Package Version** | `Claude_2.37337.1.0_x64` | `Claude_2.42304.0.0_x64` | 样本版本字段不同 |
+| **主进程核心 Chunk** | `index.chunk-CHpJbW9_.js` (6.7MB) | `index.chunk-lzaSYO3Q.js` (7.08MB) | 文件名和记录大小不同；不据此推断功能增量 |
+| **主进程分块数量** | 142 个 chunk | 358 个 chunk | 静态清单计数不同；不据此推断加载时序或启动行为 |
+| **`app.asar` SHA-256** | `6290a54e...` | `8f4d3dec5e4f3ddffb150321060b18807d83a40f3a65618fe4f29325379da9db` | 两个样本的记录哈希不同 |
+| **`ion-dist` 资源规模** | 历史盘点为 635 个模块 (~78MB) | 当前盘点为 3,644 个文件 (116MB .js / 25 个 .css / 5 个 .html) | 盘点口径不同，数量不可直接作依赖规模比较 |
+| **前端入口 Bundle** | `index-C4qJSrNf.js` | `index-D3kGySMO.js` | 入口名变化；当前 React DOM 包含 19.2.4 实现，但页面 root 调用链未追通 |
+| **CSS 自定义属性名称** | 历史记录为 1,045 个 `--cds-*` | 当前记录为 1,070 个 `--cds-*` | 两次去重方式/文件范围未证明完全一致，不能据差值认定新增 25 个正式令牌 |
+| **MCP 资源** | 历史包内可见 MCP 相关名称 | 当前包可见 MCP 名称及 GitHub/Office 365 相关资源 | 包内清单不证明服务均启动、可用或已完整映射 |
+| **浏览器集成线索** | 注册表排除项 | 当前包中出现更多浏览器 Native Messaging 相关引用 | 静态字符串不证明所有浏览器都已连通或双向通信成功 |
 
 ---
 
 ### 8.2 核心系统交互时序图 (Mermaid Sequence Diagrams)
 
 #### 时序图 1：应用启动、策略决议与渲染模式选择（1P vs 3P）
+
+> 静态线索关系图；每条箭头均为分析整理的候选关系，未在运行时捕获。
 
 ```mermaid
 sequenceDiagram
@@ -840,25 +796,27 @@ sequenceDiagram
     participant Win as BrowserWindow (Main)
     participant Web as ion-dist React SPA
 
-    OS->>Boot: 启动 Claude.exe (FullTrust)
-    Boot->>Boot: 初始化 Sentry / 遥测 / 崩溃捕获
-    Boot->>Policy: 读取 HKLM/HKCU Policies (SPn)
-    Policy-->>Boot: 返回 ManagedPolicy (3P/Gateway/Telemetry)
+    OS-->>Boot: Windows/MSIX 启动上下文线索
+    Boot-->>Boot: 包内存在 Sentry / 崩溃捕获相关代码
+    Boot-->>Policy: HKLM/HKCU policy 读取代码线索
+    Policy-->>Boot: managed configuration 相关名称
     
-    alt 启用企业内网 3P 模式 (bootstrapUrl 或 thirdPartyMode)
-        Boot->>Router: registerThirdPartyProtocolHandlers()
-        Router->>Boot: 注册 app://localhost 协议拦截
-        Boot->>Win: 创建窗口并加载 app://localhost/index.html
-        Win->>Router: 发起 GET /api/bootstrap
-        Router-->>Win: 返回本地 Mock 身份与网关配置
-        Win->>Web: 启动 React SPA (Zustand + QueryClient)
-    else 标准公网 1P 模式
-        Boot->>Win: 创建窗口并加载 https://claude.ai
-        Win->>Web: 加载线上最新 Web 应用 (claude:// 协议监听)
+    alt bundle 中出现 3P / bootstrap / app://localhost 分支
+        Boot-->>Router: 本地协议注册函数名线索
+        Router-->>Boot: app://localhost 资源路径线索
+        Boot-->>Win: 窗口加载目标候选
+        Win-->>Router: /api/bootstrap 路由名称线索
+        Router-->>Win: handler 的返回值和执行条件未动态验证
+        Win-->>Web: 前端入口资源随包提供
+    else bundle 中出现 claude.ai 相关 URL
+        Boot-->>Win: https://claude.ai 导航相关代码线索
+        Win-->>Web: 页面内容与响应未由本静态分析验证
     end
 ```
 
-#### 时序图 2：Code 会话启动、HostLoop 进程派生与凭证隔离
+#### 时序图 2：Code helper 启动候选链与凭据交接缺口
+
+> REA 静态关系和分析重建稿示意；不是进程捕获或网络抓包。
 
 ```mermaid
 sequenceDiagram
@@ -866,23 +824,21 @@ sequenceDiagram
     participant UI as Code 标签页 (React SPA)
     participant IPC as LocalSessions Controller (RPC)
     participant HL as HostLoopProcessManager
-    participant FS as 临时文件系统 (NTFS)
-    participant CLI as claude.exe (Bun Binary 217MB)
-    participant API as 推理网关 / Anthropic API
+    participant CLI as claude.exe（历史本机样本约 217MB）
+    participant API as 配置的服务端（目标未动态确认）
 
-    UI->>IPC: LocalSessions.startSession(cwd, model, effort)
-    IPC->>IPC: 构建环境变量 (bJ: ANTHROPIC_BASE_URL, 托管标记)
-    IPC->>HL: spawnHelper(binaryPath, args, env, authToken)
-    HL->>FS: 写入临时 Token 文件并 openSync 获取 FD
-    HL->>FS: 立即调用 unlinkSync 删除磁盘物理文件 (内存引用保留)
-    HL->>CLI: 派生 claude.exe (注入 CLAUDE_CODE_AUTH_FD 与 stream-json 管道)
-    HL->>HL: joinAppJob(CLI.pid) (加入 Windows Job Object 容器)
-    CLI->>API: 建立流式推理连接 (POST /v1/messages)
-    API-->>CLI: 实时 SSE 消息块
-    CLI-->>UI: stream-json 结构化回传 (Thinking / Output / Tools)
+    UI-->>IPC: LocalSessions RPC 名称/参数线索
+    IPC-->>IPC: 环境变量和 provider 配置线索
+    IPC-->>HL: helper 启动候选关系
+    HL-->>CLI: 重建稿以三个标准 pipe 调用 spawn
+    Note over HL,CLI: 重建稿设置 FD 环境变量，但没有把 FD 加入子进程 stdio；凭据交接未证实
+    Note over HL: 重建稿没有 Job Object 绑定调用；只显示 taskkill 回收路径
+    CLI-->>API: 包内出现 /v1/messages 等字符串；实际请求未捕获
+    API-->>CLI: 网络响应与 SSE 流程未验证
+    CLI-->>UI: stream-json 输出处理相关线索
 ```
 
-#### 时序图 3：双向 Stream-JSON 控制流（权限审批与 Token 无感刷新）
+#### 时序图 3：审批与凭据刷新消息名称（静态流程示意）
 
 ```mermaid
 sequenceDiagram
@@ -892,52 +848,48 @@ sequenceDiagram
     participant UI as Electron Main / Renderer UI
     participant User as 用户交互界面
 
-    Note over CLI,UI: 场景 A：CLI 请求执行敏感工具 (Bash / File Edit)
-    CLI->>SDK: control_request: { subtype: "can_use_tool", tool: "Bash", command: "rm -rf" }
-    SDK->>UI: 触发 local_exec_consent 原生权限卡片
-    UI->>User: 渲染权限审批弹窗 (Allow / Deny)
-    User-->>UI: 点击 "Allow once"
-    UI-->>SDK: 审批通过
-    SDK-->>CLI: control_response: { decision: "approved" }
-    CLI->>CLI: 执行工具并将执行结果写入上下文
+    Note over CLI,UI: 消息名称与代码片段示意；不是运行时抓包，刷新成功/自动重试未验证
 
-    Note over CLI,UI: 场景 B：长任务执行中 Token 遭遇过期 (401 Unauthorized)
-    CLI->>SDK: control_request: { subtype: "host_auth_token_refresh" }
-    SDK->>UI: AuthManager.refreshHostAuthTokenForSdk()
-    UI-->>SDK: 返回最新轮换的 Bearer Token
-    SDK-->>CLI: control_response: { success: true, refreshedToken: "..." }
-    CLI->>CLI: 内存热替换凭证并无感自动重试推理请求
+    Note over CLI,UI: can_use_tool / local_exec_consent 为静态名称线索
+    CLI-->>SDK: control_request 标签候选
+    SDK-->>UI: 权限 UI 处理名称线索
+    UI-->>User: 审批界面候选关系（未验证）
+    User-->>UI: 用户决策
+    UI-->>SDK: 结果字段与回调顺序待验证
+    SDK-->>CLI: control_response 标签候选
+
+    Note over CLI,UI: host_auth_token_refresh 为静态名称线索；401/403 触发和重试未验证
+    CLI-->>SDK: control_request 标签候选
+    SDK-->>UI: 刷新函数/回调名称线索
+    UI-->>SDK: 返回内容与时机待验证
+    SDK-->>CLI: control_response 标签候选
 ```
 
-#### 时序图 4：Cowork 虚拟机生命周期、HCS 虚拟化与 MITM 代理
+#### 时序图 4：Cowork/HCS 与代理代码线索（静态流程草图）
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant Main as Electron Main (CoworkVmManager)
     participant HCS as Windows Host Compute System
-    participant VM as Cowork VM (gVisor Kernel)
-    participant MITM as 本地 MITM 凭证代理 (NSn)
+    participant VM as Cowork VM 相关资源/字符串（运行未验证）
+    participant MITM as 代理/凭据过滤名称候选（NSn）
     participant Egress as 目标外部网络
 
-    Main->>HCS: getHcsStatus() 查询 VirtualMachinePlatform
-    HCS-->>Main: 平台已就绪
-    Main->>Main: 检查本地缓存 userData/vm_bundles/
-    opt 存在增量补丁
-        Main->>Main: applyVmImageDelta() 合成新版 VM 镜像
+    Note over Main,Egress: 包内代码/字符串关联示意；未启动 VM，也未验证网络策略效果
+
+    Main-->>HCS: HCS 状态与启动名称线索
+    HCS-->>Main: 平台状态未动态检查
+    Main-->>Main: vm_bundles 路径名称线索
+    opt 源码中出现差量更新标识
+        Main-->>Main: applyVmImageDelta 名称；效果未验证
     end
-    Main->>HCS: startVM(image, "gvisor")
-    HCS->>VM: 引导轻量级微容器沙箱
-    VM->>MITM: 虚拟机内部 CLI 发起网络请求
-    MITM->>MITM: 执行 NSn() 检查 (白名单: localhost / *.anthropic.com)
-    alt 地址在白名单内
-        MITM->>Egress: 注入 approved oauth-token 并放行流量
-    else 非法外网或跨网段地址
-        MITM-->>VM: 阻断连接并剥离敏感凭据 (DLP 防护生效)
-    end
+    Main-->>VM: startVM / gvisor 相关代码线索
+    VM-->>MITM: 代理交互候选关系（未追通）
+    MITM-->>Egress: 目标与凭据策略未动态验证
 ```
 
-#### 时序图 5：多线程 Web Worker 渲染管线与 Computer Use 零拷贝画布
+#### 时序图 5：Worker 资源与消息线索（非性能验证）
 
 ```mermaid
 sequenceDiagram
@@ -945,42 +897,40 @@ sequenceDiagram
     participant UI as 渲染主线程 (React)
     participant HW as highlightWorker (Shiki)
     participant FW as framebufferCanvasWorker
-    participant GPU as OffscreenCanvas / WebGL
+    participant Canvas as OffscreenCanvas / 2D context
 
-    Note over UI,HW: 文本流式高亮解耦
-    UI->>HW: postMessage({ text: "const a = 1;", lang: "typescript" })
-    HW->>HW: Shiki TextMate tokenize (离线无 DOM 阻塞)
-    HW-->>UI: 返回高亮语法树 (Tokens Array)
-    UI->>UI: 增量补丁更新 DOM (零掉帧)
+    Note over UI,HW: 包内存在 Shiki/TextMate worker 资源；创建调用和消息 schema 未完整追踪
+    UI-->>HW: worker 消息关系候选（静态）
+    HW-->>HW: tokenize 相关代码标记
+    HW-->>UI: 返回结构与 UI 消费方式未验证
 
-    Note over UI,FW: Computer Use 屏幕流零拷贝渲染
-    UI->>GPU: transferControlToOffscreen()
-    UI->>FW: postMessage({ canvas: offscreenCanvas, port: messagePort }, [transfer])
-    FW->>FW: ImageDecoder 硬件级并行解码图像帧
-    FW->>FW: 检查 seq > paintedSeq (丢弃陈旧滞后帧)
-    FW->>GPU: ctx.drawImage(image) 直通 GPU 显存
+    Note over UI,FW: 包内可见的画布/帧处理静态线索
+    UI->>Canvas: transferControlToOffscreen()（调用关系未追通）
+    UI->>FW: worker/message-port 交接线索（静态）
+    FW-->>FW: ImageDecoder / createImageBitmap / 序号检查代码线索
+    FW-->>Canvas: OffscreenCanvas 绘制代码线索
 ```
 
 ---
 
-## 9. 完整反混淆逆向源码索引与工程映射表
+## 9. 分析重建 TypeScript 文件索引
 
-已将主进程、SDK 及底层原生逻辑反混淆、类型化并重构成标准的 TypeScript 工程代码，归档在 `deobfuscated/` 目录下：
+下列文件是依据静态线索编写的分析重建稿，不是原始反编译源码或已验证实现。具体边界和已知缺口见 `deobfuscated/README.md`：
 
 | 文件名称 | 源代码位置 | 核心职能与逆向技术点 |
 |---|---|---|
-| **[DlpSecurityFilter.ts](deobfuscated/DlpSecurityFilter.ts)** | `index.chunk-CHpJbW9_.js` (`FFn`, `PFn`, `AFn`) | 敏感凭据/私钥拦截、Unicode 规范化、NTFS ADS 备用数据流遍历阻断 |
-| **[ThirdPartyMockRouter.ts](deobfuscated/ThirdPartyMockRouter.ts)** | `index.chunk-CHpJbW9_.js` (`Z$r`, `X$r`, `U$r`) | `app://localhost` 自定义协议拦截、`/api/bootstrap` 本地 Mock 路由 |
-| **[SessionEnvironmentBuilder.ts](deobfuscated/SessionEnvironmentBuilder.ts)** | `index.chunk-CHpJbW9_.js` (`bJ`, `anthropicWire`) | CLI Helper 环境变量拼装、`ANTHROPIC_BASE_URL` 网关路由、凭据脱敏 |
-| **[AgentSdkControlProtocol.ts](deobfuscated/AgentSdkControlProtocol.ts)** | `index.chunk-C4qJSrNf.js` & `CHpJbW9_.js` | 59 种子类型 `stream-json` 双向控制通道、`host_auth_token_refresh` 动态续约 |
-| **[ShellPtyManager.ts](deobfuscated/ShellPtyManager.ts)** | `index.chunk-DIEpbncU.js` & `ptyHostWorker.js` | ConPTY / node-pty 进程隔离、30 秒 Watchdog 自动 refork、SSH 代理链 |
+| **[DlpSecurityFilter.ts](deobfuscated/DlpSecurityFilter.ts)** | `index.chunk-CHpJbW9_.js` (`FFn`, `PFn`, `AFn`) | 敏感名称/路径匹配重建稿；覆盖与运行时拦截未验证 |
+| **[ThirdPartyMockRouter.ts](deobfuscated/ThirdPartyMockRouter.ts)** | `index.chunk-CHpJbW9_.js` (`Z$r`, `X$r`, `U$r`) | 部分本地路由名称与 stub 线索；重建稿未实现协议注册，不证明出站流量受阻 |
+| **[SessionEnvironmentBuilder.ts](deobfuscated/SessionEnvironmentBuilder.ts)** | `index.chunk-CHpJbW9_.js` (`bJ`, `anthropicWire`) | 整理环境变量、网关和凭据标识线索；调用条件与最终请求配置未验证 |
+| **[AgentSdkControlProtocol.ts](deobfuscated/AgentSdkControlProtocol.ts)** | `index.chunk-C4qJSrNf.js` & `CHpJbW9_.js` | 静态发现的 stream-json 标签与部分控制流重建稿；清单不保证完整或运行时可达 |
+| **[ShellPtyManager.ts](deobfuscated/ShellPtyManager.ts)** | `index.chunk-DIEpbncU.js` & `ptyHostWorker.js` | 重建稿整理 node-pty、watchdog 与 SSH 相关线索；进程隔离效果未验证 |
 | **[CodeHelperDownloader.ts](deobfuscated/CodeHelperDownloader.ts)** | `index.chunk-CHpJbW9_.js` (`installDirFor`, buildPin) | BuildPin 清单校验、SHA-256 哈希目录分级存储、`CLAUDE_CODE_LOCAL_BINARY` 覆盖 |
 | **[ManagedConfigResolver.ts](deobfuscated/ManagedConfigResolver.ts)** | `index.chunk-CHpJbW9_.js` (`SPn`, `QUr`) | Windows 注册表 GPO 策略读取 (`SOFTWARE\Policies\Claude`)、设置层级决议 |
-| **[CoworkVmManager.ts](deobfuscated/CoworkVmManager.ts)** | `index.chunk-CHpJbW9_.js` (`startVM`, `applyVmImageDelta`) | Windows HCS 容器底座、Cowork VM 镜像增量热更新、MITM 白名单凭据拦截 |
-| **[ClaudeNativeBindings.ts](deobfuscated/ClaudeNativeBindings.ts)** | `@ant/claude-native/*.node` (NAPI-RS) | Computer Use 自动化、内核级 `*Beneath` 路径防御、DPAPI、Windows Hello、TPM 签名 |
-| **[BuiltinMcpServers.ts](deobfuscated/BuiltinMcpServers.ts)** | `index.chunk-CHpJbW9_.js` (内置 MCP 注册表) | 12 大内置 MCP 服务器协议定义与集中调度器 (`ccd_view`, `ccd_host`, `terminal` 等) |
-| **[LocalSessionsController.ts](deobfuscated/LocalSessionsController.ts)** | `index.chunk-CHpJbW9_.js` (`LocalSessions` RPC) | UI 面向前台的会话状态机、多模态附件发送、Fork 会话、模型/Effort 调节 |
-| **[HostLoopProcessManager.ts](deobfuscated/HostLoopProcessManager.ts)** | `index.chunk-YBFVQBQ_.js` (`HostLoop`) | 进程组管理、Windows Job Object 强绑定、凭据 FD 匿名化隔离、`taskkill /T /F` 级联终止 |
-| **[SurfaceReachabilityMatrix.ts](deobfuscated/SurfaceReachabilityMatrix.ts)** | `index.chunk-CHpJbW9_.js` (`vze`, `bze`) | 表面隔离执行矩阵 (`chat`, `code`, `cowork`)、宿主与云端执行策略约束决议 |
+| **[CoworkVmManager.ts](deobfuscated/CoworkVmManager.ts)** | `index.chunk-CHpJbW9_.js` (`startVM`, `applyVmImageDelta`) | 重建稿整理 HCS/VM/镜像更新/代理名称；VM 与凭据边界未运行验证 |
+| **[ClaudeNativeBindings.ts](deobfuscated/ClaudeNativeBindings.ts)** | `@ant/claude-native/*.node` package metadata | API 名称与形态草图；当前包有原生文件完整性矛盾，行为和安全效果未确认 |
+| **[BuiltinMcpServers.ts](deobfuscated/BuiltinMcpServers.ts)** | `index.chunk-CHpJbW9_.js` (MCP 名称/结构线索) | 7 个 schema 示例；dispatcher 不调用 handler，不是完整目录或可用实现 |
+| **[LocalSessionsController.ts](deobfuscated/LocalSessionsController.ts)** | `index.chunk-CHpJbW9_.js` (`LocalSessions` RPC) | LocalSessions RPC 名称与局部操作分支重建稿；完整状态机未验证 |
+| **[HostLoopProcessManager.ts](deobfuscated/HostLoopProcessManager.ts)** | `index.chunk-YBFVQBQ_.js` (`HostLoop`) | 重建稿未传递凭据 FD，失败回退放入环境变量；没有 Job Object 调用，仅有 taskkill 路径 |
+| **[SurfaceReachabilityMatrix.ts](deobfuscated/SurfaceReachabilityMatrix.ts)** | `index.chunk-CHpJbW9_.js` (`vze`, `bze`) | surface/target 配置数据重建稿；策略完整性与运行效果未验证 |
 
 

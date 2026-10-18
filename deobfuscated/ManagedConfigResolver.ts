@@ -3,6 +3,12 @@
  * @description Deobfuscated Windows Registry Policy & Managed Settings Resolver
  * Origin: Claude Desktop index.chunk-CHpJbW9_.js (`SPn()`, `QUr()`, `SettingsResolver`)
  */
+/**
+ * Analyst reconstruction from static evidence; not verbatim vendor source or REA output.
+ * Names, types, control flow, and security semantics may be inferred or incomplete.
+ * This file has not been compiled, unit-tested, or runtime-validated.
+ */
+
 
 export namespace ManagedConfigResolver {
   export interface ManagedPolicy {

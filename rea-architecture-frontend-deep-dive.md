@@ -1,6 +1,6 @@
 # REA 深入分析：Claude Desktop 2.42304.0.0 架构与前端
 
-> 分析对象：`E:\project\reserveproject\claudedesktop\Claude.msix`，AppxManifest 版本 **2.42304.0.0 x64**，内部 `@ant/desktop` 版本 **2.42304.0**。REA 版本 **6.5.0**。本文以本目录的 MSIX、解包文件及 REA 静态证据为准。
+> 分析对象：本仓库随附分析的 Windows MSIX 样本（文件名 `Claude.msix`），AppxManifest 版本 **2.42304.0.0 x64**，内部 `@ant/desktop` 版本 **2.42304.0**。REA 版本 **6.5.0**。仓库忽略 MSIX 与解包目录；复现时需自行准备相同版本样本。
 >
 > 证据级别：**直接观察**表示从包清单/HTML/JS/CSS 读取到；**REA 静态关系**表示 REA 从静态语法构造的候选关系；**推断**表示依据多处文件组合得到；**未验证**表示没有实际启动或联网测试。
 
@@ -9,7 +9,7 @@
 1. 本目录的应用包是 **2.42304.0.0**，原始架构稿分析的是 **2.37337.1.0**。前端 bundle 哈希、目录内容均已变化；原稿应作为旧版记录阅读，不能把旧版文件名和数量直接套到当前包。
 2. 当前 MSIX 分成两块重要的前端代码：`app.asar` 中的 Electron 桌面壳与 preload，和 ASAR 外的 `resources/ion-dist` 大型 Web 应用资源。两者都在包内，但它们的本地存在不等于整个产品可离线完成登录和模型请求。
 3. 当前 `ion-dist` 的 HTML 引导 React 应用，模块清单显示 Zustand、QueryClient、TipTap/ProseMirror 等依赖；CSS 含 Monaco diff 样式。多种 Worker 将语法高亮、画布绘制、压缩等工作从主线程分开。
-4. REA 对当前 `app.asar` 完成了 452 个源文件的分析输入和应用图构建；两个大型源在语义分析阶段触发 worker heap 限制，图覆盖仍不完整。`ion-dist` 单独分析了 6 个指定 JS 文件，另有 3,614 个已盘点文件没有进入该次代码分析。
+4. REA 对当前 `app.asar` 完成了 452 个源文件的分析输入和应用图构建；两个大型源在语义分析阶段触发 worker heap 限制，图覆盖仍不完整。`ion-dist` 单独分析了 6 个指定 JS 文件，另有 3,614 个已盘点文件没有进入该次代码分析。当前 `claude.exe` 只做了通用 PE 资源清点，未进行可执行文件语义/原生代码分析。
 5. 这些是静态证据。REA 没有启动 Electron、执行 bundle、触发 IPC、调用网关或证明策略实际生效。
 
 ## REA 是怎样“解析架构”的
@@ -24,6 +24,8 @@ REA 的应用分析不是运行客户端后观察行为，而是从一个固定�
 
 本轮对当前 `app.asar` 的 REA Evidence ID 是 `ev_047a8e39ac1487c8a803f675db5d374a4a4eb9772b487f4e567d00cd93882bf0`；对 `ion-dist` 6 个前端文件的 Evidence ID 是 `ev_d8151593574491f547f089baa1376b2602064febb931203c8132928ef447f58a`，目录 SHA-256 为 `c52bb551a26216395cb6616650b86af315b30c721e547b3c6cf597b194dc2521`。
 
+当前 helper `extracted_msix/app/claude.exe` 的大小为 **245,756,240 字节**，REA 通用 PE 检查 Evidence ID 为 `ev_cabda353e071c89a06596a3b047fc60716947191f2dfc719b7bdb2fe1bb9cbdb`，SHA-256 为 `84b6beb90538fcc401197130f888d121d92a9ce38e493ff7bad3b69cc1d8cc1d`。该次 `inspect-artifact` 只完成 `inventory_artifact`；REA 明确列出 `inspect_managed_artifact` 和 `open_binary` 为未执行的后续探针。因此本文中的 helper 行为线索来自 `app.asar` 的启动/配置代码和包内元数据，不代表已解析 helper 内部实现。
+
 ### 当前包的覆盖限制
 
 - `app.asar` 清单中有 **452 个被选入分析的源文件**。总语义节点预算为 10,000，每文件 1,000。
@@ -32,6 +34,7 @@ REA 的应用分析不是运行客户端后观察行为，而是从一个固定�
 - 当前 `app.asar` 有 5 个完整性矛盾：`node-pty` 的两个 `.node` 文件、内置 `github-mcp-server.exe`、Office 365 MCP 的 `msal-node-runtime.node` 和 `msalruntime.dll`。REA 将观测到的字节标为 `observed-untrusted`。这只能说明声明哈希与当前字节不一致；不能据此认定被篡改，也不能将这些字节当作已验证等价物。
 - `resources/ion-dist` 内没有 `.map` source map 文件。多数业务代码是哈希命名的压缩 bundle，变量、原始组件名和 JSX/TS 源码映射有限。
 - REA 报告指出 `main_window/index.html` 有 2 段 inline JavaScript 没有进入语义分析；动态 IPC 通道、动态属性和运行时注册仍会有未知项。
+- 当前 `claude.exe` 的 REA 检查只保留 PE 根清单/通用字节盘点，并未运行格式专属 managed/native 代码分析。可执行文件大小不能代表分析覆盖深度。
 
 ## 当前版本的桌面结构
 
@@ -131,11 +134,11 @@ flowchart TB
 rea --version
 
 rea inspect-artifact `
-  'E:\project\reserveproject\claudedesktop\extracted_msix\app\resources\app.asar' `
+  '.\extracted_msix\app\resources\app.asar' `
   --integrity-policy record-and-continue --format md
 
 rea analyze-javascript-application `
-  'E:\project\reserveproject\claudedesktop\extracted_msix\app\resources\app.asar' `
+  '.\extracted_msix\app\resources\app.asar' `
   --artifact-format asar --integrity-policy record-and-continue `
   --max-semantic-nodes 10000 --max-semantic-nodes-per-file 1000 --format json
 ```

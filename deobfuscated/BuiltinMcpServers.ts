@@ -1,12 +1,17 @@
 /**
  * @file BuiltinMcpServers.ts
- * @description Deobfuscated Built-in Model Context Protocol (MCP) Server Suite & Dispatcher
+ * @description Partial analyst schema sketch for selected built-in MCP names.
  * Origin: Claude Desktop index.chunk-CHpJbW9_.js & index.chunk-C4qJSrNf.js
  *
- * Implements the 12 native in-memory MCP servers injected by the Electron Main process
- * into the Claude Code helper CLI process to establish a structured bidirectional
- * control and automation plane.
+ * The file contains seven schema entries and a placeholder dispatcher. It does not
+ * implement or enumerate a complete native MCP server suite.
  */
+/**
+ * Analyst reconstruction from static evidence; not verbatim vendor source or REA output.
+ * Names, types, control flow, and security semantics may be inferred or incomplete.
+ * This file has not been compiled, unit-tested, or runtime-validated.
+ */
+
 
 export namespace BuiltinMcpServers {
   export interface McpToolDefinition {
@@ -27,7 +32,7 @@ export namespace BuiltinMcpServers {
   }
 
   /**
-   * Complete catalog of the 12 built-in MCP servers
+   * Partial illustrative schema list; this file currently defines seven entries.
    */
   export const BUILTIN_MCP_REGISTRY: Record<string, McpServerManifest> = {
     ccd_view: {
@@ -414,7 +419,7 @@ export namespace BuiltinMcpServers {
   };
 
   /**
-   * Dispatches incoming tool execution requests to the corresponding native handler.
+   * Placeholder validation path; no native/tool handler is invoked by this sketch.
    */
   export async function executeMcpTool(serverName: string, toolName: string, args: Record<string, any>): Promise<any> {
     const server = BUILTIN_MCP_REGISTRY[serverName];
