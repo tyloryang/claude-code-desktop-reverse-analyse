@@ -216,9 +216,15 @@ ls -la deobfuscated/
 
 # View detailed architecture diagrams and write-up
 cat claude-desktop-architecture.md
+
+# Test and build the third-party zero-config package
+npm --prefix zero-config test
+npm --prefix zero-config run build
 ```
+
+第三方模型免配置实现、REA 证据和运行验证见 [`docs/claude-msix-4.4212-third-party-zero-config.md`](docs/claude-msix-4.4212-third-party-zero-config.md)。完整操作手册见 [`zero-config/README.md`](zero-config/README.md)。构建结果位于 `dist/Claude-ThirdParty-Package/`，同级 ZIP 可作为 GitHub Release 资产上传。
 
 ---
 
 ## ⚖️ Disclaimer
-This project is an independent static-analysis research note. It is not an official product description, runtime validation, complete reverse engineering, a security assessment, or confirmation of intranet/offline readiness. Reconstructions are analyst-written reading aids. All trademarks and registered names belong to Anthropic, PBC.
+This project is an independent reverse-engineering research project, not an official product description, complete reverse engineering, security assessment, or confirmation of intranet/offline readiness. Most reports are static analyses; runtime claims are limited to the explicit scenarios and artifact identities recorded in their verification sections. Reconstructions are analyst-written reading aids. All trademarks and registered names belong to Anthropic, PBC.
