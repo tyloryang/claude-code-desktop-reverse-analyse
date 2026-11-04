@@ -1,0 +1,14 @@
+{
+  "name": "claude-desktop-third-party-zero-config",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local zero-configuration third-party model gateway for the analyzed Claude Desktop package",
+  "scripts": {
+    "test": "node --test test/*.test.cjs",
+    "build": "node build-portable.mjs",
+    "build:exe": "node build-portable.mjs --exe-only"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
