@@ -83,6 +83,18 @@ function ensureZeroConfigProfile(baseUrl, options = {}) {
   return { directory, rootConfigPath, metadataPath, profilePath };
 }
 
+async function probeGateway(url) {
+  try {
+    const response = await fetch(`${url}/_claude_zero_config/health`, { signal: AbortSignal.timeout(600) });
+    if (!response.ok) return false;
+    const body = await response.json();
+    return body?.service === 'claude-third-party-zero-config';
+  } catch {
+    // Endpoint is not running, or is still starting.
+    return false;
+  }
+}
+
 function createLogger(directory) {
   const logPath = path.join(directory, 'zero-config.log');
   return (event, details = {}) => {
@@ -104,6 +116,7 @@ async function start(options = {}) {
 
   const environment = options.environment ?? process.env;
   const directory = dataDirectory(environment);
+  globalThis.__CLAUDE_ZERO_CONFIG_DIRECTORY__ = directory;
   const logger = options.logger ?? createLogger(directory);
   fs.mkdirSync(directory, { recursive: true });
   try {
@@ -120,13 +133,43 @@ async function start(options = {}) {
   }
   process.env.CLAUDE_USER_DATA_DIR = directory;
   const preferredPort = Number(options.port ?? environment.CLAUDE_ZERO_CONFIG_PORT ?? 42121);
-  let config = ensureZeroConfigProfile(`http://127.0.0.1:${preferredPort}`, { directory, environment });
+  const preferredUrl = `http://127.0.0.1:${preferredPort}`;
+  const existingProfilePath = path.join(directory, 'configLibrary', `${PROFILE_ID}.json`);
+  const existingProfile = readObject(existingProfilePath);
+  const existingUrl = typeof existingProfile.inferenceGatewayBaseUrl === 'string' && existingProfile.inferenceGatewayBaseUrl
+    ? existingProfile.inferenceGatewayBaseUrl
+    : null;
+  const targetUrl = existingUrl ?? preferredUrl;
+  const targetPort = Number(new URL(targetUrl).port) || preferredPort;
+
+  // index.pre.js reads claude_desktop_config.json and configLibrary synchronously while the main
+  // process evaluates, so the gateway profile and deploymentMode must be on disk before the first
+  // await here; otherwise the application evaluates an empty configuration and falls back to the
+  // claude.ai sign-in UI. A duplicate launch keeps the address the first instance already wrote,
+  // so the port a live gateway holds is never rewritten.
+  let config = ensureZeroConfigProfile(targetUrl, { directory, environment });
+
+  // A known profile means another instance may own this port and could still be mid-startup, so
+  // give its gateway a grace window before claiming the port ourselves. A fresh directory only
+  // needs a single probe to avoid stealing a port an unrelated gateway already holds.
+  const probeAttempts = existingUrl ? 20 : 1;
+  for (let attempt = 0; attempt < probeAttempts; attempt += 1) {
+    if (await probeGateway(targetUrl)) {
+      logger('gateway-already-running', { baseUrl: targetUrl });
+      process.env.CLAUDE_ZERO_CONFIG_GATEWAY_URL = targetUrl;
+      return { gateway: { baseUrl: targetUrl, reused: true }, config };
+    }
+    if (attempt + 1 < probeAttempts) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+
   const gateway = await startZeroConfigGateway({
     environment,
     logger,
-    port: preferredPort,
+    port: targetPort,
   });
-  if (config && gateway.baseUrl !== `http://127.0.0.1:${preferredPort}`) {
+  if (gateway.baseUrl !== targetUrl) {
     config = ensureZeroConfigProfile(gateway.baseUrl, { directory, environment });
   }
   process.env.CLAUDE_ZERO_CONFIG_GATEWAY_URL = gateway.baseUrl;

@@ -1,8 +1,8 @@
-# Claude Desktop 4.4212 第三方模型免配置 MSIX / EXE 包
+# Claude Desktop 4.4212 第三方模型免配置 EXE / MSIX 包
 
 这是基于仓库当前 `Claude.msix` 制作的 Windows 研究构建。它保留 Claude Desktop 最新版内置的 `3p/gateway` 分支，在主进程入口前注入一个本地回环兼容层，使 Claude Desktop 可以自动发现并调用 Ollama、LM Studio、vLLM、LocalAI 或其他 OpenAI-compatible 服务。
 
-> 这不是 Anthropic 官方发布包，也不带 Anthropic 的数字签名。构建会同时输出自签名 MSIX 和需要 Windows package identity 的松散注册包；MSIX 使用独立研究构建证书，安装前必须由用户明确接受当前用户根证书信任。
+> 这不是 Anthropic 官方发布包，也不带 Anthropic 的数字签名。默认交付形式是免安装的独立 `Claude-ThirdParty-ZeroConfig.exe`：不注册包、不导入证书、不需要管理员或开发者模式。自签名 MSIX 与松散注册包作为可选路径保留，MSIX 使用独立研究构建证书，安装前必须由用户明确接受当前用户根证书信任。
 
 ## 1. 快速使用
 
@@ -17,9 +17,17 @@
 | vLLM | `http://127.0.0.1:8000/v1` | 启动 OpenAI-compatible API |
 | LocalAI | `http://127.0.0.1:8080/v1` | 使用 OpenAI-compatible API |
 
-### 1.2 安装 MSIX（推荐）
+### 1.2 双击 EXE（推荐，免证书）
 
-使用发布包：
+```text
+dist\\Claude-ThirdParty-ZeroConfig.exe
+```
+
+双击即可：首次运行显示解压进度并启动 Claude Third-Party，之后复用同一构建的缓存。不运行 `Add-AppxPackage`，不创建或导入任何证书，不需要管理员权限或开发者模式；构建、安装、启动全程不触碰 Windows 证书库。详细使用说明见 [`README-EXE.md`](README-EXE.md)。
+
+### 1.3 安装 MSIX（可选）
+
+如果希望获得正式的 Windows 包安装体验，使用发布包：
 
 ```text
 dist\\Claude-ThirdParty-ZeroConfig-MSIX.zip
@@ -27,7 +35,7 @@ dist\\Claude-ThirdParty-ZeroConfig-MSIX.zip
 
 解压后双击 `Install-Claude-ThirdParty-MSIX.cmd`。安装器先核对 MSIX 签名与公开 `.cer` 指纹，再要求明确确认自签名证书信任；Windows 还会显示根证书安全警告。完整说明见 [`README-MSIX.md`](README-MSIX.md)。
 
-### 1.3 启动松散 EXE 包（备用）
+### 1.4 启动松散 EXE 包（备用）
 
 如果不希望信任自签名根证书，可使用松散包。构建完成后进入：
 
@@ -60,7 +68,7 @@ Start-Claude-ThirdParty.cmd
 
 如果 `Add-AppxPackage` 返回 `0x80073CFF`，请在 Windows 设置中手动启用 Developer Mode，然后再次运行脚本。本项目不会自动修改系统安全设置或安装证书。
 
-### 1.4 卸载松散包
+### 1.5 卸载松散包
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\Uninstall-Claude-ThirdParty.ps1
@@ -107,7 +115,9 @@ API Key 只从当前进程环境读取，不写入 Claude Desktop 配置。配�
 
 ```mermaid
 flowchart LR
-    U[用户] --> C[Claude Desktop UI]
+    U[用户] -->|双击| E[Claude-ThirdParty-ZeroConfig.exe\n自解压启动器，无包身份/无证书]
+    E -->|解压缓存后执行| A[app\\Claude.exe\n普通 Win32 进程]
+    A --> C[Claude Desktop UI]
     C --> V[官方 vendor 主进程\nindex.pre.js]
     B[zero-config bootstrap] -.入口前置注入.-> V
     V --> G[官方 3p/gateway 路由]
@@ -116,7 +126,7 @@ flowchart LR
     D --> O[Ollama\n11434/v1]
     D --> M[LM Studio\n1234/v1]
     D --> Q[vLLM\n8000/v1]
-    D --> A[LocalAI\n8080/v1]
+    D --> LA[LocalAI\n8080/v1]
     D --> X[自定义 BASE_URL]
     L --> T[Anthropic ↔ OpenAI\n请求、工具、SSE 转换]
     T --> D
@@ -246,8 +256,9 @@ flowchart TD
 4. **隔离用户数据**：vendor 会重置 `CLAUDE_USER_DATA_DIR`，因此应拦截 `app.setPath('userData', ...)`，使用独立目录；
 5. **实现回环兼容层**：把 Anthropic Messages 转成 OpenAI Chat Completions，再把 JSON/SSE 转回去；
 6. **处理 Electron fuse**：重打 `app.asar` 后只关闭 `EnableEmbeddedAsarIntegrityValidation`，保留 `OnlyLoadAppFromAsar`；
-7. **保留 package identity**：直接执行解包目录可能导致 Windows/Chromium 初始化后退出，最终应注册松散包或重新签名 MSIX；
-8. **验证真实入口**：不能只运行 adapter 单测，还要注册并启动包，访问健康接口、模型发现、非流式和流式消息路径。
+7. **选择启动形态**：优先使用独立 EXE 启动器——直接执行解包目录可能因 Windows/Chromium 初始化退出，MSIX 又要求证书信任；自解压启动器以普通 Win32 进程运行 `app\\Claude.exe`，两者都不需要；需要包身份时仍可选松散注册或签名 MSIX；
+8. **隔离配置写入顺序**：主进程在同步求值阶段就读取 `claude_desktop_config.json` 与 `configLibrary`，gateway profile 和 `deploymentMode` 必须在启动器任何异步步骤之前写盘，否则应用以空配置启动并退回 claude.ai 登录页；
+9. **验证真实入口**：不能只运行 adapter 单测，还要以真实启动方式运行，确认配置加载类型、模型进入选择器、非流式和流式消息路径，以及证书库与官方配置不变。
 
 ## 7. 从源码重新构建
 
@@ -261,8 +272,16 @@ Claude.msix
 
 ```bash
 npm --prefix zero-config test
-npm --prefix zero-config run build
+npm --prefix zero-config run build:exe
 ```
+
+`build:exe` 只生成免证书独立 EXE（不需要 Windows SDK 的 `MakeAppx.exe` / `SignTool.exe`）：
+
+```text
+dist\\Claude-ThirdParty-ZeroConfig.exe
+```
+
+生成 MSIX 与松散包时使用 `npm --prefix zero-config run build`。
 
 构建脚本会：
 
@@ -270,21 +289,23 @@ npm --prefix zero-config run build
 2. 修复 REA 解包产生的 `%40ant` native binding 路径兼容问题；
 3. 解包并重打 `app.asar`；
 4. 注入 `bootstrap.cjs`、`adapter.cjs` 和 `server.cjs`；
-5. 修改 `Claude.exe` 的 embedded-ASAR integrity fuse；
-6. 写入独立 manifest 和安装/卸载脚本；
-7. 输出松散包 `dist/Claude-ThirdParty-Package/` 和 `dist/Claude-ThirdParty-Package.zip`；
-8. 使用 Windows SDK `MakeAppx.exe` 生成真正的 `.msix`；
-9. 用临时自签名代码签名证书签署 MSIX，只导出公开 `.cer`，随后删除私钥；
-10. 输出 `dist/Claude-ThirdParty-ZeroConfig-MSIX.zip` 发布包。
+5. 在 `--exe-only` 模式下补丁两处配置目录函数与两处模型校验函数（匹配数不为 1 时构建直接失败），使隔离目录在 vendor 清理环境变量后仍然生效，并放行第三方模型名；
+6. 修改 `Claude.exe` 的 embedded-ASAR integrity fuse；
+7. `build:exe`：用 `csc.exe` 编译自解压启动器 `Claude-ThirdParty-ZeroConfig.exe`（内嵌 `payload.zip` 与其 SHA-256、应用 manifest 声明长路径支持），不调用 MakeAppx、SignTool 或任何证书命令；
+8. `build`（完整模式）：写入独立 manifest 和安装/卸载脚本，输出松散包 `dist/Claude-ThirdParty-Package/` 和 `dist/Claude-ThirdParty-Package.zip`；使用 Windows SDK `MakeAppx.exe` 生成真正的 `.msix`；用临时自签名代码签名证书签署 MSIX，只导出公开 `.cer`，随后删除私钥；输出 `dist/Claude-ThirdParty-ZeroConfig-MSIX.zip` 发布包。
 
-构建过程使用 Node.js `>=22.0.0`，并要求 Windows SDK 提供 `MakeAppx.exe` 与 `SignTool.exe`。ASAR 和 Electron fuse CLI 通过 `npx` 调用，不需要把依赖安装到目标包内。自签名 MSIX 的安装说明和证书信任边界见 [`README-MSIX.md`](README-MSIX.md)。
+构建过程使用 Node.js `>=22.0.0`；`build:exe` 额外需要 Windows 自带的 .NET Framework C# 编译器（`csc.exe`），不需要 Windows SDK。ASAR 和 Electron fuse CLI 通过 `npx` 调用，不需要把依赖安装到目标包内。自签名 MSIX 的安装说明和证书信任边界见 [`README-MSIX.md`](README-MSIX.md)。
 
 ## 8. 验证和边界
 
 已验证：
 
-- 6 项自动测试全部通过；
-- 真实 package identity 启动成功；
+- 11 项自动测试全部通过；
+- 免证书 EXE 以普通 Win32 进程启动成功（`GetPackageFullName` 返回 `15700` = 无包身份），全程不改动证书库、包注册与官方 `Claude-3p` 配置；
+- 应用启动即加载隔离配置（`configuration at launch { type: 'local' }`）并加载研究构建 UI（`Loaded app://localhost`）；
+- 第三方模型进入客户端选择器：`Model discovery: 1 found in 79ms; picker = 1`；
+- 重复启动复用同一网关，第一实例的 profile 与进程不受干扰；
+- MSIX/松散包路径的 package identity 启动成功；
 - `GET /_claude_zero_config/health` 返回 `200`；
 - 无 provider 时 `/v1/models` 返回明确 `503`；
 - mock vLLM 自动发现成功；
@@ -305,4 +326,6 @@ npm --prefix zero-config run build
 
 完整 REA 证据和运行记录见：
 
-[`docs/claude-msix-4.4212-third-party-zero-config.md`](../docs/claude-msix-4.4212-third-party-zero-config.md)
+[`docs/claude-exe-runtime-verification.md`](../docs/claude-exe-runtime-verification.md)（免证书 EXE，本次默认交付形态）
+
+[`docs/claude-msix-4.4212-third-party-zero-config.md`](../docs/claude-msix-4.4212-third-party-zero-config.md)（MSIX / 松散包路径）

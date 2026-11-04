@@ -1,4 +1,6 @@
-# Claude Desktop 4.4212 第三方模型免配置实现与验证
+# Claude Desktop 4.4212 第三方模型免配置实现与验证（MSIX / 松散包路径）
+
+> 当前默认交付已切换为免证书独立 EXE（`Claude-ThirdParty-ZeroConfig.exe`），其运行验证见 [claude-exe-runtime-verification.md](claude-exe-runtime-verification.md)。本文保留 MSIX 与松散注册包两条可选路径的实现与验证记录。
 
 本文记录仓库当前 `Claude.msix` 的 REA 证据、第三方模型接入设计、构建方式和运行验证结果。结论只适用于本文列出的产物身份；REA 的 JavaScript 应用图覆盖不完整，未覆盖部分不会被解释为功能不存在。
 

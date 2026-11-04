@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "zero-config-runtime-mock",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["zero-config/test/runtime-mock-openai.cjs"],
+      "port": 8000
+    }
+  ]
+}

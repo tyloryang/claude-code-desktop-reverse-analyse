@@ -3,11 +3,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { patchConfigDirectory, patchModelValidator } from './lib/portable-patch.cjs';
 
+const exeOnly = process.argv.includes('--exe-only');
+const positionalArguments = process.argv.slice(2).filter((argument) => argument !== '--exe-only');
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(scriptDirectory, '..');
-const inputMsix = path.resolve(process.argv[2] || path.join(repositoryRoot, 'Claude.msix'));
-const outputDirectory = path.resolve(process.argv[3] || path.join(repositoryRoot, 'dist', 'Claude-ThirdParty-Package'));
+const inputMsix = path.resolve(positionalArguments[0] || path.join(repositoryRoot, 'Claude.msix'));
+const outputDirectory = path.resolve(positionalArguments[1] || path.join(repositoryRoot, 'dist', exeOnly ? 'Claude-ThirdParty-EXE' : 'Claude-ThirdParty-Package'));
 const outputArchive = `${outputDirectory}.zip`;
 const releaseDirectory = path.dirname(outputDirectory);
 const outputMsix = path.join(releaseDirectory, 'Claude-ThirdParty-ZeroConfig-x64.msix');
@@ -171,7 +174,24 @@ try {
 
   const buildDirectory = path.join(unpackedAsar, '.vite', 'build');
   const originalEntry = path.join(buildDirectory, 'index.pre.js');
-  const vendorSource = fs.readFileSync(originalEntry, 'utf8');
+  let vendorSource = fs.readFileSync(originalEntry, 'utf8');
+  if (exeOnly) {
+    vendorSource = patchConfigDirectory(vendorSource, 'index.pre.js');
+    vendorSource = patchModelValidator(vendorSource, 'index.pre.js');
+    const chunks = fs.readdirSync(buildDirectory).filter((file) => file.startsWith('index.chunk-') && file.endsWith('.js'));
+    let patchedChunks = 0;
+    for (const file of chunks) {
+      const chunkPath = path.join(buildDirectory, file);
+      let source = fs.readFileSync(chunkPath, 'utf8');
+      if (!/function [\w$]+\(\)\{if\(process\.env\.CLAUDE_USER_DATA_DIR\)return [\w$]+\.app\.getPath\("userData"\);/.test(source)) continue;
+      source = patchConfigDirectory(source, file);
+      source = patchModelValidator(source, file);
+      fs.writeFileSync(chunkPath, source);
+      patchedChunks += 1;
+    }
+    if (patchedChunks !== 1) throw new Error(`Expected one main config-directory chunk, found ${patchedChunks}`);
+    console.log('[build] isolated preloader and main configuration directories and patched model validator');
+  }
   fs.writeFileSync(originalEntry, injectedEntrySource(vendorSource));
 
   const injectedDirectory = path.join(buildDirectory, 'zero-config');
@@ -219,6 +239,19 @@ try {
     'EnableEmbeddedAsarIntegrityValidation=off',
   ]);
 
+  if (exeOnly) {
+    fs.rmSync(path.join(outputDirectory, 'AppxManifest.xml'), { force: true });
+    fs.copyFileSync(path.join(scriptDirectory, 'README-EXE.md'), path.join(outputDirectory, 'README.md'));
+    const outputExe = path.join(releaseDirectory, 'Claude-ThirdParty-ZeroConfig.exe');
+    run('powershell.exe', [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-File', path.join(scriptDirectory, 'build-exe-launcher.ps1'),
+      '-AppDirectory', path.join(outputDirectory, 'app'),
+      '-OutputExe', outputExe,
+    ]);
+    fs.copyFileSync(path.join(scriptDirectory, 'README-EXE.md'), path.join(releaseDirectory, 'README-EXE.md'));
+    console.log(`\nCertificate-free EXE created at:\n${outputExe}`);
+  } else {
   for (const fileName of [
     'Install-Claude-ThirdParty.ps1',
     'Uninstall-Claude-ThirdParty.ps1',
@@ -282,6 +315,7 @@ try {
   console.log(`Loose release archive created at:\n${outputArchive}`);
   console.log(`Signed MSIX created at:\n${outputMsix}`);
   console.log(`MSIX release archive created at:\n${outputMsixArchive}`);
+  }
 } finally {
   fs.rmSync(workDirectory, { recursive: true, force: true });
 }
