@@ -222,7 +222,7 @@ npm --prefix zero-config test
 npm --prefix zero-config run build
 ```
 
-第三方模型免配置实现、REA 证据和运行验证见 [`docs/claude-msix-4.4212-third-party-zero-config.md`](docs/claude-msix-4.4212-third-party-zero-config.md)。完整操作手册见 [`zero-config/README.md`](zero-config/README.md)。构建结果位于 `dist/Claude-ThirdParty-Package/`，同级 ZIP 可作为 GitHub Release 资产上传。
+第三方模型免配置实现、REA 证据和运行验证见 [`docs/claude-msix-4.4212-third-party-zero-config.md`](docs/claude-msix-4.4212-third-party-zero-config.md)。完整操作手册见 [`zero-config/README.md`](zero-config/README.md)，自签名 MSIX 安装说明见 [`zero-config/README-MSIX.md`](zero-config/README-MSIX.md)。构建会输出真正的 `dist/Claude-ThirdParty-ZeroConfig-x64.msix`、公开证书、MSIX 发布 ZIP，以及松散包备用版本。
 
 ---
 

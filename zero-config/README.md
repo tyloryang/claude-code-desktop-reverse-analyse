@@ -1,8 +1,8 @@
-# Claude Desktop 4.4212 第三方模型免配置 EXE 包
+# Claude Desktop 4.4212 第三方模型免配置 MSIX / EXE 包
 
 这是基于仓库当前 `Claude.msix` 制作的 Windows 研究构建。它保留 Claude Desktop 最新版内置的 `3p/gateway` 分支，在主进程入口前注入一个本地回环兼容层，使 Claude Desktop 可以自动发现并调用 Ollama、LM Studio、vLLM、LocalAI 或其他 OpenAI-compatible 服务。
 
-> 这不是 Anthropic 官方发布包，也不带 Anthropic 的数字签名。构建结果是一个需要 Windows package identity 的松散注册包。
+> 这不是 Anthropic 官方发布包，也不带 Anthropic 的数字签名。构建会同时输出自签名 MSIX 和需要 Windows package identity 的松散注册包；MSIX 使用独立研究构建证书，安装前必须由用户明确接受当前用户根证书信任。
 
 ## 1. 快速使用
 
@@ -17,9 +17,19 @@
 | vLLM | `http://127.0.0.1:8000/v1` | 启动 OpenAI-compatible API |
 | LocalAI | `http://127.0.0.1:8080/v1` | 使用 OpenAI-compatible API |
 
-### 1.2 启动 EXE 包
+### 1.2 安装 MSIX（推荐）
 
-构建完成后进入：
+使用发布包：
+
+```text
+dist\\Claude-ThirdParty-ZeroConfig-MSIX.zip
+```
+
+解压后双击 `Install-Claude-ThirdParty-MSIX.cmd`。安装器先核对 MSIX 签名与公开 `.cer` 指纹，再要求明确确认自签名证书信任；Windows 还会显示根证书安全警告。完整说明见 [`README-MSIX.md`](README-MSIX.md)。
+
+### 1.3 启动松散 EXE 包（备用）
+
+如果不希望信任自签名根证书，可使用松散包。构建完成后进入：
 
 ```text
 dist\\Claude-ThirdParty-Package\\
@@ -50,7 +60,7 @@ Start-Claude-ThirdParty.cmd
 
 如果 `Add-AppxPackage` 返回 `0x80073CFF`，请在 Windows 设置中手动启用 Developer Mode，然后再次运行脚本。本项目不会自动修改系统安全设置或安装证书。
 
-### 1.3 卸载
+### 1.4 卸载松散包
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\Uninstall-Claude-ThirdParty.ps1
@@ -262,9 +272,12 @@ npm --prefix zero-config run build
 4. 注入 `bootstrap.cjs`、`adapter.cjs` 和 `server.cjs`；
 5. 修改 `Claude.exe` 的 embedded-ASAR integrity fuse；
 6. 写入独立 manifest 和安装/卸载脚本；
-7. 输出 `dist/Claude-ThirdParty-Package/`。
+7. 输出松散包 `dist/Claude-ThirdParty-Package/` 和 `dist/Claude-ThirdParty-Package.zip`；
+8. 使用 Windows SDK `MakeAppx.exe` 生成真正的 `.msix`；
+9. 用临时自签名代码签名证书签署 MSIX，只导出公开 `.cer`，随后删除私钥；
+10. 输出 `dist/Claude-ThirdParty-ZeroConfig-MSIX.zip` 发布包。
 
-构建过程使用 Node.js `>=22.0.0`。ASAR 和 Electron fuse CLI 通过 `npx` 调用，不需要把依赖安装到目标包内。
+构建过程使用 Node.js `>=22.0.0`，并要求 Windows SDK 提供 `MakeAppx.exe` 与 `SignTool.exe`。ASAR 和 Electron fuse CLI 通过 `npx` 调用，不需要把依赖安装到目标包内。自签名 MSIX 的安装说明和证书信任边界见 [`README-MSIX.md`](README-MSIX.md)。
 
 ## 8. 验证和边界
 
@@ -277,7 +290,9 @@ npm --prefix zero-config run build
 - mock vLLM 自动发现成功；
 - 非流式 `/v1/messages` 转换成功；
 - 流式文本 SSE 以 `message_stop` 正常结束；
-- 修改后 fuse 状态符合预期。
+- 修改后 fuse 状态符合预期；
+- `MakeAppx.exe` 成功生成真正的 MSIX，`SignTool.exe` 成功签名；
+- MSIX 内签名证书与发布的 `.cer` 指纹一致，构建后私钥未保留。
 
 尚未声称已验证：
 
@@ -286,7 +301,7 @@ npm --prefix zero-config run build
 - Anthropic 专有 beta content block；
 - tokenizer 精确 token 数；
 - 完全离线运行；
-- 重新签名并安装为官方形式的 MSIX。
+- 用户在 Windows 安全警告中接受当前用户根证书信任后的 MSIX 端到端安装。非交互验证确认只放入 `TrustedPeople` 会以 `0x800B0109` 失败，因此安装脚本明确使用 `CurrentUser\\Root` 并保留系统确认框。
 
 完整 REA 证据和运行记录见：
 

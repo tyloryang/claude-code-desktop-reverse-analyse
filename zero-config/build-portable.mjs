@@ -9,6 +9,10 @@ const repositoryRoot = path.resolve(scriptDirectory, '..');
 const inputMsix = path.resolve(process.argv[2] || path.join(repositoryRoot, 'Claude.msix'));
 const outputDirectory = path.resolve(process.argv[3] || path.join(repositoryRoot, 'dist', 'Claude-ThirdParty-Package'));
 const outputArchive = `${outputDirectory}.zip`;
+const releaseDirectory = path.dirname(outputDirectory);
+const outputMsix = path.join(releaseDirectory, 'Claude-ThirdParty-ZeroConfig-x64.msix');
+const outputCertificate = path.join(releaseDirectory, 'Claude-ThirdParty-ZeroConfig.cer');
+const outputMsixArchive = path.join(releaseDirectory, 'Claude-ThirdParty-ZeroConfig-MSIX.zip');
 const workDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-zero-config-build-'));
 const unpackedMsix = path.join(workDirectory, 'msix');
 const unpackedAsar = path.join(workDirectory, 'asar');
@@ -195,6 +199,8 @@ try {
   fs.writeFileSync(manifestPath, loosePackageManifest(packageVersion));
   fs.rmSync(path.join(unpackedMsix, 'AppxSignature.p7x'), { force: true });
   fs.rmSync(path.join(unpackedMsix, 'AppxBlockMap.xml'), { force: true });
+  fs.rmSync(path.join(unpackedMsix, '[Content_Types].xml'), { force: true });
+  fs.rmSync(path.join(unpackedMsix, '[Content_Types].old'), { force: true });
 
   console.log('[build] copying loose package directory');
   fs.rmSync(outputDirectory, { recursive: true, force: true });
@@ -235,8 +241,47 @@ try {
     outputArchive,
   ]);
 
+  for (const fileName of [
+    'Install-Claude-ThirdParty-MSIX.ps1',
+    'Install-Claude-ThirdParty-MSIX.cmd',
+    'Uninstall-Claude-ThirdParty-MSIX.ps1',
+    'README-MSIX.md',
+  ]) {
+    fs.copyFileSync(path.join(scriptDirectory, fileName), path.join(releaseDirectory, fileName));
+  }
+
+  run('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    path.join(scriptDirectory, 'build-signed-msix.ps1'),
+    '-PackageDirectory',
+    outputDirectory,
+    '-OutputMsix',
+    outputMsix,
+    '-OutputCertificate',
+    outputCertificate,
+  ]);
+
+  run('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    path.join(scriptDirectory, 'package-msix-release.ps1'),
+    '-SourceDirectory',
+    releaseDirectory,
+    '-Destination',
+    outputMsixArchive,
+  ]);
+
   console.log(`\nLoose package build created at:\n${outputDirectory}`);
-  console.log(`Release archive created at:\n${outputArchive}`);
+  console.log(`Loose release archive created at:\n${outputArchive}`);
+  console.log(`Signed MSIX created at:\n${outputMsix}`);
+  console.log(`MSIX release archive created at:\n${outputMsixArchive}`);
 } finally {
   fs.rmSync(workDirectory, { recursive: true, force: true });
 }

@@ -45,14 +45,16 @@ bootstrap 在 vendor 主进程初始化前完成以下工作：
 
 直接运行 MSIX 解包目录时，未修改的原始 `Claude.exe` 与修改版都会在 Chromium cache 权限错误后以状态码 0 退出。该对照说明问题不是注入代码，而是应用脱离 Windows package identity。
 
-构建器因此输出完整的松散包布局，而不是只复制 `app/`：
+构建器因此先输出完整的松散包布局，而不是只复制 `app/`，再用该布局生成独立签名的 MSIX：
 
 - 生成独立包名 `ClaudeThirdPartyZeroConfig` 的最小 manifest；
 - 使用独立协议 `claude-3p` 和别名 `claude-3p-desktop.exe`，避免与官方 Claude 冲突；
 - 保留 `runFullTrust`、`unvirtualizedResources` 与 `%LOCALAPPDATA%\\Claude-3p-ZeroConfig` 排除规则；
 - 删除修改后失效的官方签名和 block map，不伪造 Anthropic 签名；
-- 通过 `Add-AppxPackage -Register` 获得 package identity；
-- 通过 `IApplicationActivationManager` 激活包应用并返回真实 PID。
+- 通过 `Add-AppxPackage -Register` 获得松散包 package identity；
+- 通过 `IApplicationActivationManager` 激活松散包应用并返回真实 PID；
+- 通过 Windows SDK `MakeAppx.exe` 生成真正的 MSIX；
+- 用临时自签名代码签名证书签署 MSIX，只发布公开 `.cer` 并在构建后删除私钥。
 
 ## 构建与启动
 
@@ -64,9 +66,14 @@ npm --prefix zero-config test
 npm --prefix zero-config run build
 ```
 
-输出目录为 `dist/Claude-ThirdParty-Package/`，同级发布归档为 `dist/Claude-ThirdParty-Package.zip`。运行 `Start-Claude-ThirdParty.cmd` 即可注册并启动；`Uninstall-Claude-ThirdParty.ps1` 只移除 `ClaudeThirdPartyZeroConfig` 注册。
+构建同时输出：
 
-如果 `Add-AppxPackage` 返回 `0x80073CFF`，需要由用户手动启用 Windows Developer Mode。脚本不会修改该系统设置，也不会安装证书。
+- `dist/Claude-ThirdParty-ZeroConfig-x64.msix`：真正的自签名 MSIX；
+- `dist/Claude-ThirdParty-ZeroConfig.cer`：不含私钥的公开签名证书；
+- `dist/Claude-ThirdParty-ZeroConfig-MSIX.zip`：MSIX、证书、安装/卸载脚本和说明；
+- `dist/Claude-ThirdParty-Package/` 与同级 ZIP：松散包备用路径。
+
+MSIX 安装器会核对签名证书指纹，并在用户明确确认后把自签名证书加入 `CurrentUser\\Root`；Windows 的根证书安全警告不会被绕过。松散包通过 `Start-Claude-ThirdParty.cmd` 注册并启动；如果返回 `0x80073CFF`，需要由用户手动启用 Windows Developer Mode。
 
 ## 验证结果
 
